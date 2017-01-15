@@ -1,2 +1,7 @@
 # Ignore the user-specific initial_cache file
 initial_cache.cmake
+targets/*
+examples/data/*.mtl
+examples/data/*.obj
+.idea/*
+cmake-build-debug/*
