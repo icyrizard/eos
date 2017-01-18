@@ -41,6 +41,10 @@ target_link_libraries(fit-model-simple ${OpenCV_LIBS} ${Boost_LIBRARIES})
 add_executable(fit-model fit-model.cpp)
 target_link_libraries(fit-model ${OpenCV_LIBS} ${Boost_LIBRARIES})
 
+# Multi frame fitting
+add_executable(fit-model-multi-frame fit-model-multi-frame.cpp)
+target_link_libraries(fit-model-multi-frame ${OpenCV_LIBS} ${Boost_LIBRARIES})
+
 if(BUILD_CERES_EXAMPLE)
 	# Find Ceres, for the fit-model-ceres app:
 	find_package(Ceres REQUIRED)
@@ -60,6 +64,7 @@ target_link_libraries(generate-obj ${OpenCV_LIBS} ${Boost_LIBRARIES})
 
 # install target:
 install(TARGETS fit-model-simple DESTINATION bin)
+install(TARGETS fit-model-multi-frame DESTINATION bin)
 install(TARGETS fit-model DESTINATION bin)
 install(TARGETS generate-obj DESTINATION bin)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/examples/data DESTINATION bin)

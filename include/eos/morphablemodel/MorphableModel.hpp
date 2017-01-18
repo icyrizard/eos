@@ -172,7 +172,7 @@ public:
 	 * Returns a sample from the model with the given shape- and
 	 * colour PCA coefficients.
 	 *
-	 * If one of the given vectors is empty, the mean is used.
+	 * If an empty vector is given, the mean of the occording vector is used.
 	 * The coefficient vectors should contain normalised, i.e. standard normal distributed coefficients.
 	 * If the Morphable Model is a shape-only model (without colour model), make sure to
 	 * leave \c color_coefficients empty.
