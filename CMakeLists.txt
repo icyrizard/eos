@@ -64,6 +64,8 @@ option(GENERATE_PYTHON_BINDINGS "Build python bindings. Requires python to be in
 message(STATUS "GENERATE_PYTHON_BINDINGS: ${GENERATE_PYTHON_BINDINGS}")
 option(GENERATE_MATLAB_BINDINGS "Build Matlab bindings. Requires Matlab with the compiler installed or the Matlab Compiler Runtime." OFF)
 message(STATUS "GENERATE_MATLAB_BINDINGS: ${GENERATE_MATLAB_BINDINGS}")
+option(BUILD_TESTS "Build tests for this library." ON)
+message(STATUS "BUILD_TESTS: ${BUILD_TESTS}")
 
 
 # Build a CPack driven installer package:
@@ -75,7 +77,7 @@ set(CPACK_PACKAGE_VERSION_PATCH "${eos_VERSION_PATCH}")
 include(CPack)
 
 # Find dependencies:
-find_package(OpenCV 2.4.3 REQUIRED core)
+find_package(OpenCV REQUIRED core)
 message(STATUS "OpenCV include dir found at ${OpenCV_INCLUDE_DIRS}")
 message(STATUS "OpenCV lib dir found at ${OpenCV_LIB_DIR}")
 
@@ -167,6 +169,10 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/3rdparty/nanoflann/include/ DESTINATION 3r
 install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/nanoflann/COPYING DESTINATION 3rdparty/nanoflann/) # nanoflann licence
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/3rdparty/eigen3-nnls/src/ DESTINATION 3rdparty/eigen3-nnls/src) # eigen3-nnls header
 install(FILES ${CMAKE_SOURCE_DIR}/3rdparty/eigen3-nnls/README.md DESTINATION 3rdparty/eigen3-nnls/) # eigen3-nnls attribution
+
+if(BUILD_TESTS)
+	add_subdirectory(tests)
+endif()
 
 if(BUILD_EXAMPLES)
 	add_subdirectory(examples)

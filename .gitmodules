@@ -13,3 +13,6 @@
 [submodule "3rdparty/mexplus"]
 	path = 3rdparty/mexplus
 	url = https://github.com/kyamagu/mexplus.git
+[submodule "3rdparty/Catch"]
+	path = 3rdparty/Catch
+	url = https://github.com/philsquared/Catch.git
