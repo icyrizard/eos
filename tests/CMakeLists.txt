@@ -42,19 +42,16 @@ set(CATCH_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/3rdparty/Catch/include CACHE INTERNAL 
 add_library(Catch INTERFACE)
 target_include_directories(Catch INTERFACE ${CATCH_INCLUDE_DIR})
 
-add_executable (fitting-test fitting/fitting_test.cpp)
-target_link_libraries(fitting-test Catch ${OPENCV_LIBS} ${BOOST_LIBRARIES})
+set(${EOS_TESTS_DIRS} ${CMAKE_SOURCE_DIR}/tests/fitting "Paths to test include directories")
 
-add_test (NAME fitting-test COMMAND fitting-test)
-install(TARGETS fitting-test DESTINATION tests)
+add_executable (main-tests main_tests.cpp)
+target_link_libraries(main-tests Catch ${EOS_TESTS_DIRS}  ${OpenCV_LIBS} ${Boost_LIBRARIES})
 
+install(TARGETS main-tests DESTINATION tests)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/tests/data DESTINATION tests)
 
-# Simple model fitting (orthographic camera & shape to landmarks) example:
-#add_executable(fit-model-simple fit-model-simple.cpp)
-#add_executable(fitting-tests )
-#target_link_libraries(fit-model-simple ${OpenCV_LIBS} ${Boost_LIBRARIES})
-
-# install target:
-#install(TARGETS fit-model-simple DESTINATION bin)
-#install(DIRECTORY ${CMAKE_SOURCE_DIR}/examples/data DESTINATION bin)
+# add tests
+enable_testing()
+add_test(NAME fitting-test COMMAND fitting-test)
+add_test(NAME linear-shape-fitting-test COMMAND linear-shape-fitting-test)
 
