@@ -4,7 +4,6 @@ targets/*
 install/*
 build/*
 3rdparty/*
-examples/data/*.mtl
-examples/data/*.obj
+examples/data/
 .idea/*
 cmake-build-debug/*
