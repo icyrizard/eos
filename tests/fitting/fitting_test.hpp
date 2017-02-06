@@ -95,7 +95,7 @@ LandmarkCollection<cv::Vec2f> read_pts_landmarks(std::string filename)
 };
 
 morphablemodel::MorphableModel loadTestModel() {
-	return morphablemodel::load_model("share/sfm_shape_3448.bin");
+	return morphablemodel::load_model("../share/sfm_shape_3448.bin");
 }
 
 /**
@@ -154,11 +154,11 @@ inline float euclidean_distance(cv::Vec2f landmark, cv::Mat vertex_screen_coords
 
 TEST_CASE("Test ortographic projection", "[projection]" ){
 	// ======== begin setup ============
-	Mat image = cv::imread("tests/data/image_0010.png");
+	Mat image = cv::imread("data/image_0010.png");
 
 	LandmarkCollection<cv::Vec2f> landmarks;
-	landmarks = read_pts_landmarks("tests/data/image_0010.pts");
-	core::LandmarkMapper landmark_mapper = core::LandmarkMapper("share/ibug2did.txt");
+	landmarks = read_pts_landmarks("data/image_0010.pts");
+	core::LandmarkMapper landmark_mapper = core::LandmarkMapper("../share/ibug2did.txt");
 
 	vector<Vec4f> model_points; // the points in the 3D shape model
 	vector<int> vertex_indices; // their vertex indices
@@ -170,6 +170,12 @@ TEST_CASE("Test ortographic projection", "[projection]" ){
 	fitting::ScaledOrthoProjectionParameters pose = fitting::estimate_orthographic_projection_linear(
 		image_points, model_points, true, image.rows
 	);
+
+	std::cout << glm::to_string(pose.R) << endl;
+	std::cout << pose.s << endl;
+	std::cout << pose.tx << endl;
+	std::cout << pose.ty << endl;
+
 	fitting::RenderingParameters rendering_params(pose, image.cols, image.rows);
 
 	// Estimate the shape coefficients by fitting the shape to the landmarks:
@@ -201,22 +207,24 @@ TEST_CASE("Test ortographic projection", "[projection]" ){
 			// The vertex_idx should be around the value of the original coordinates after we have
 			// projected it with the affine_from_ortho that is obtained earlier.
 			Mat vertex_screen_coords = affine_from_ortho *
-				   Mat(cv::Vec4f(
+			   Mat(cv::Vec4f(
 					   mesh.vertices[vertex_idx].x,
 					   mesh.vertices[vertex_idx].y,
 					   mesh.vertices[vertex_idx].z,
-					   mesh.vertices[vertex_idx].w)
-		   );
+					   mesh.vertices[vertex_idx].w
+			       )
+			   );
 
 			// using euclidean distance here, but should look at other ways too.
-			total_error.push_back(euclidean_distance(landmarks[i].coordinates, vertex_screen_coords));
+			float dist = euclidean_distance(landmarks[i].coordinates, vertex_screen_coords);
+			total_error.push_back(dist);
 		}
 
-		// Caculate mean error and stddev.
+		// Calculate mean error and stddev.
 		float accum = 0.0;
 		float mean_error = std::accumulate(total_error.begin(), total_error.end(), 0) / landmarks.size();
 
-		// cacl. standardeviation
+		// cacl. standard deviation
 		std::for_each (std::begin(total_error), std::end(total_error), [&](const float d) {
 			accum += (d - mean_error) * (d - mean_error);
 		});
