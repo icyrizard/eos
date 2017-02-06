@@ -108,6 +108,7 @@ set(eigen3_nnls_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/3rdparty/eigen3-nnls/src")
 set(HEADERS
 	include/eos/core/Landmark.hpp
 	include/eos/core/LandmarkMapper.hpp
+	include/eos/core/BufferedVideoIterator.hpp
 	include/eos/morphablemodel/PcaModel.hpp
 	include/eos/morphablemodel/MorphableModel.hpp
 	include/eos/morphablemodel/Blendshape.hpp
