@@ -56,7 +56,7 @@ option(BUILD_EXAMPLES "Build the example applications." ON)
 message(STATUS "BUILD_EXAMPLES: ${BUILD_EXAMPLES}")
 option(BUILD_CERES_EXAMPLE "Build the fit-model-ceres example (requires Ceres)." OFF)
 message(STATUS "BUILD_CERES_EXAMPLE: ${BUILD_CERES_EXAMPLE}")
-option(BUILD_UTILS "Build utility applications." OFF)
+option(BUILD_UTILS "Build utility applications." ON)
 message(STATUS "BUILD_UTILS: ${BUILD_UTILS}")
 option(BUILD_DOCUMENTATION "Build the library documentation." OFF)
 message(STATUS "BUILD_DOCUMENTATION: ${BUILD_DOCUMENTATION}")
@@ -109,6 +109,7 @@ set(HEADERS
 	include/eos/core/Landmark.hpp
 	include/eos/core/LandmarkMapper.hpp
 	include/eos/core/BufferedVideoIterator.hpp
+	include/eos/core/landmark_utils.hpp
 	include/eos/morphablemodel/PcaModel.hpp
 	include/eos/morphablemodel/MorphableModel.hpp
 	include/eos/morphablemodel/Blendshape.hpp

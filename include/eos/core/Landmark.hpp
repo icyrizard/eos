@@ -22,9 +22,23 @@
 #ifndef EOS_LANDMARK_HPP_
 #define EOS_LANDMARK_HPP_
 
+#include "opencv2/core/core.hpp"
+#include "opencv2/opencv.hpp"
+
+#include <vector>
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <iostream>
+#include <fstream>
+
+using cv::Mat;
+using cv::Vec2f;
+using cv::Vec3f;
+using cv::Vec4f;
+using std::vector;
+using std::string;
+
 
 namespace eos {
 	namespace core {

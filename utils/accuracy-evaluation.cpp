@@ -18,9 +18,10 @@
  */
 #include "eos/core/Landmark.hpp"
 #include "eos/core/LandmarkMapper.hpp"
+#include "eos/core/landmark_utils.hpp"
 #include "eos/core/BufferedVideoIterator.hpp"
-#include "eos/morphablemodel/MorphableModel.hpp"
-#include "eos/morphablemodel/Blendshape.hpp"
+#include "eos/morphablemodel/morphablemodel.hpp"
+#include "eos/morphablemodel/blendshape.hpp"
 #include "eos/fitting/fitting.hpp"
 #include "eos/render/utils.hpp"
 #include "eos/render/texture_extraction.hpp"
@@ -46,65 +47,11 @@ using cv::Mat;
 using cv::Vec2f;
 using cv::Vec3f;
 using cv::Vec4f;
-using std::cout;
-using std::endl;
 using std::vector;
 using std::string;
 
 
 using namespace cv;
-
-
-/**
- * Reads an ibug .pts landmark file and returns an ordered vector with
- * the 68 2D landmark coordinates.
- *
- * @param[in] filename Path to a .pts file.
- * @return An ordered vector with the 68 ibug landmarks.
- */
-LandmarkCollection<cv::Vec2f> read_pts_landmarks(std::string filename)
-{
-	using std::getline;
-	using cv::Vec2f;
-	using std::string;
-	LandmarkCollection<Vec2f> landmarks;
-	landmarks.reserve(68);
-
-	std::ifstream file(filename);
-	if (!file.is_open()) {
-		throw std::runtime_error(string("Could not open landmark file: " + filename));
-	}
-
-	string line;
-	// Skip the first 3 lines, they're header lines:
-	getline(file, line); // 'version: 1'
-	getline(file, line); // 'n_points : 68'
-	getline(file, line); // '{'
-
-	int ibugId = 1;
-	while (getline(file, line))
-	{
-		if (line == "}") { // end of the file
-			break;
-		}
-		std::stringstream lineStream(line);
-
-		Landmark<Vec2f> landmark;
-		landmark.name = std::to_string(ibugId);
-		if (!(lineStream >> landmark.coordinates[0] >> landmark.coordinates[1])) {
-			throw std::runtime_error(string("Landmark format error while parsing the line: " + line));
-		}
-		// From the iBug website:
-		// "Please note that the re-annotated data for this challenge are saved in the Matlab convention of 1 being
-		// the first index, i.e. the coordinates of the top left pixel in an image are x=1, y=1."
-		// ==> So we shift every point by 1:
-		landmark.coordinates[0] -= 1.0f;
-		landmark.coordinates[1] -= 1.0f;
-		landmarks.emplace_back(landmark);
-		++ibugId;
-	}
-	return landmarks;
-};
 
 /**
  * Draws the given mesh as wireframe into the image.
@@ -145,6 +92,8 @@ void draw_wireframe(cv::Mat image, const eos::render::Mesh& mesh, glm::mat4x4 mo
  */
 int main(int argc, char *argv[]) {
 	fs::path modelfile, isomapfile, videofile, landmarksfile, mappingsfile, contourfile, edgetopologyfile, blendshapesfile, outputfile;
+	std::vector<std::string> annotations;
+
 	try {
 		po::options_description desc("Allowed options");
 		desc.add_options()
@@ -154,10 +103,10 @@ int main(int argc, char *argv[]) {
 				 "a Morphable Model stored as cereal BinaryArchive")
 				("video,i", po::value<fs::path>(&videofile)->required(),
 				 "an input image")
-				("landmarks,l", po::value<fs::path>(&landmarksfile)->required()->default_value("data/image_0010.pts"),
-				 "2D landmarks for the image, in ibug .pts format")
+				("annotations,l", po::value<vector<std::string>>(&annotations)->multitoken(),
+					 ".pts annotation files per frame of video")
 				("mapping,p", po::value<fs::path>(&mappingsfile)->required()->default_value("../share/ibug2did.txt"),
-				 "landmark identifier to model vertex number mapping")
+					"2D landmarks for the image, in ibug .pts format")
 				("model-contour,c",
 				 po::value<fs::path>(&contourfile)->required()->default_value("../share/model_contours.json"),
 				 "file with model contour indices")
@@ -184,42 +133,71 @@ int main(int argc, char *argv[]) {
 		return EXIT_SUCCESS;
 	}
 
-	BufferedVideoIterator<int> vid_iterator;
 	try {
-		vid_iterator = BufferedVideoIterator<int>(videofile.string());
-	} catch(std::runtime_error &e) {
-		cout << e.what() << endl;
+		vector <vector<Vec2f>> multi_frame_points = eos::core::load_annotations(annotations, mappingsfile);
+	} catch(const std::runtime_error &e) {
+		std::cout << e.what() << std::endl;
 		return EXIT_FAILURE;
 	}
 
-	std::deque<int> frames = vid_iterator.next();
+	// Load landmarks, LandmarkMapper and the Morphable Model:
+	LandmarkCollection <cv::Vec2f> landmarks;
+	core::LandmarkMapper landmark_mapper = core::LandmarkMapper(mappingsfile);
 
-	while(!(frames.empty())) {
-		for (std::deque<int>::iterator it = frames.begin(); it!=frames.end(); ++it) {
-			std::cout << ' ' << *it;
-		}
-
-		frames = vid_iterator.next();
-		usleep(500);
+	try {
+		landmarks = eos::core::read_pts_landmarks(annotations[0]);
+	}
+	catch (const std::runtime_error &e) {
+		cout << "Error reading the landmarks: " << e.what() << endl;
+		return EXIT_FAILURE;
 	}
 
-	// Load the image, landmarks, LandmarkMapper and the Morphable Model:
-//	Mat image = cv::imread(imagefile.string());
-//	LandmarkCollection <cv::Vec2f> landmarks;
-//	try {
-//		landmarks = read_pts_landmarks(landmarksfile.string());
-//	}
-//	catch (const std::runtime_error &e) {
-//		cout << "Error reading the landmarks: " << e.what() << endl;
-//		return EXIT_FAILURE;
-//	}
-//	morphablemodel::MorphableModel morphable_model;
-//	try {
-//		morphable_model = morphablemodel::load_model(modelfile.string());
-//	}
-//	catch (const std::runtime_error &e) {
-//		cout << "Error loading the Morphable Model: " << e.what() << endl;
-//		return EXIT_FAILURE;
-//	}
+	morphablemodel::MorphableModel morphable_model;
+
+	try {
+		morphable_model = morphablemodel::load_model(modelfile.string());
+	} catch (const std::runtime_error &e) {
+		std::cout << "Error loading the Morphable Model: " << e.what() << std::endl;
+			return EXIT_FAILURE;
+	}
+
+	// These will be the final 2D and 3D points used for the fitting:
+	vector<Vec4f> model_points; // the points in the 3D shape model
+	vector<int> vertex_indices; // their vertex indices
+	std::tie(model_points, vertex_indices) = eos::core::load_model_data(landmarks, morphable_model, landmark_mapper);
+
+	BufferedVideoIterator<cv::Mat> vid_iterator;
+	std::vector <std::vector<cv::Vec2f>> landmark_annotation_list = eos::core::load_annotations(annotations, mappingsfile);
+
+	try {
+		vid_iterator = bufferedvideoiterator<cv::mat>(videofile.string(), landmark_annotation_list);
+	} catch(std::runtime_error &e) {
+		cout << e.what() << endl;
+		return exit_failure;
+	}
+
+
+	// todo: expand this to really perform some reconstruction, and move this to a test file.
+	// test with loading 10 frames subsequently.
+	// vid_iterator.next() will return a number of frames, depending on
+	std::deque<cv::mat> frames = vid_iterator.next();
+	int count = 0;
+	while(!(frames.empty())) {
+		if (count == 10) {
+			break;
+		}
+		int frame_count = 0;
+		for (std::deque<cv::mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
+			//std::cout << ' ' << *it;
+			std::cout << frame_count << " ";
+			frame_count++;
+		}
+
+		std::cout << std::endl << "frames processed: " << count * frame_count << std::endl;
+
+		frames = vid_iterator.next();
+		usleep(10);
+		count++;
+	}
 }
 

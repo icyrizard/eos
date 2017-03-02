@@ -1,4 +1,5 @@
 #include "catch.hpp"
+#include "test_helper.hpp"
 
 #include "glm/ext.hpp"
 #include "glm/gtc/matrix_transform.hpp"
@@ -13,6 +14,7 @@
 #include "eos/render/texture_extraction.hpp"
 #include "eos/render/render.hpp"
 #include "eos/render/detail/render_detail.hpp"
+
 
 #include "opencv2/core/core.hpp"
 #include "opencv2/highgui/highgui.hpp"
@@ -94,10 +96,6 @@ LandmarkCollection<cv::Vec2f> read_pts_landmarks(std::string filename)
 	return landmarks;
 };
 
-morphablemodel::MorphableModel loadTestModel() {
-	return morphablemodel::load_model("../share/sfm_shape_3448.bin");
-}
-
 /**
  * Loads test data. Returns
  * @param landmarks
@@ -170,11 +168,6 @@ TEST_CASE("Test ortographic projection", "[projection]" ){
 	fitting::ScaledOrthoProjectionParameters pose = fitting::estimate_orthographic_projection_linear(
 		image_points, model_points, true, image.rows
 	);
-
-	std::cout << glm::to_string(pose.R) << endl;
-	std::cout << pose.s << endl;
-	std::cout << pose.tx << endl;
-	std::cout << pose.ty << endl;
 
 	fitting::RenderingParameters rendering_params(pose, image.cols, image.rows);
 

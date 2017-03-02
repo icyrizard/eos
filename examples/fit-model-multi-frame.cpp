@@ -74,7 +74,7 @@ LandmarkCollection<cv::Vec2f> read_pts_landmarks(std::string filename)
 
 	string line;
 	// Skip the first 3 lines, they're header lines:
-	getline(file, line); // 'version: 1'
+	getline(file, line); // 'version:1'
 	getline(file, line); // 'n_points : 68'
 	getline(file, line); // '{'
 

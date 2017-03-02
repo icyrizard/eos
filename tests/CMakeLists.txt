@@ -41,17 +41,19 @@ set(CATCH_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/3rdparty/Catch/include CACHE INTERNAL 
 
 add_library(Catch INTERFACE)
 target_include_directories(Catch INTERFACE ${CATCH_INCLUDE_DIR})
+include_directories(${CMAKE_SOURCE_DIR}/tests/include)
 
-set(${EOS_TESTS_DIRS} ${CMAKE_SOURCE_DIR}/tests/fitting "Paths to test include directories")
+set(EOS_TESTS_DIRS ${CMAKE_SOURCE_DIR}/tests/fitting ${CMAKE_SOURCE_DIR}/tests/core ${CMAKE_SOURCE_DIR}/tests/include "Paths to test include directories")
 
 add_executable (main-tests main_tests.cpp)
-target_link_libraries(main-tests Catch ${EOS_TESTS_DIRS}  ${OpenCV_LIBS} ${Boost_LIBRARIES})
+target_link_libraries(main-tests Catch ${OpenCV_LIBS} ${Boost_LIBRARIES})
 
 install(TARGETS main-tests DESTINATION tests)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/tests/data DESTINATION tests)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/tests/include DESTINATION tests)
 
 # add tests
 enable_testing()
 add_test(NAME fitting-test COMMAND fitting-test)
 add_test(NAME linear-shape-fitting-test COMMAND linear-shape-fitting-test)
-
+add_test(NAME landmark-test COMMAND landmark-test)

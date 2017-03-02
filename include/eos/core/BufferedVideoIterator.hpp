@@ -29,8 +29,6 @@
 #include <vector>
 #include <string>
 
-using eos::core::Landmark;
-using eos::core::LandmarkCollection;
 using cv::Mat;
 using cv::Vec2f;
 using cv::Vec3f;
@@ -38,76 +36,104 @@ using cv::Vec4f;
 using std::vector;
 using std::string;
 
+namespace fs = boost::filesystem;
 using namespace cv;
+using namespace std;
 
 namespace eos {
 	namespace core {
-
+		/**
+		 * BufferedVideo Iterator will keep a buffer of the last seen n_frames. By calling .next() it will load a new
+		 * frame from the given video and you will get a pointer to the front of the buffer (which has n_frames).
+		 *
+		 * Just imagine a sliding window accross the video, this is what we aim to implement here.
+		 *
+		 * Example:
+		 *		vid_iterator = bufferedvideoiterator<cv::mat>(videofile.string(), landmark_annotation_list);
+		 *
+		 *		std::deque<cv::mat> frames = vid_iterator.next();
+		 *		while(!(frames.empty())) {
+		 *			for (std::deque<cv::mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
+		 *				std::cout << ' ' << *it;
+		 *			}
+		 *
+		 *			frames = vid_iterator.next();
+		 *		}
+		 *
+		 * @tparam T
+		 */
+		// Note for this template: later we can use other templates for easy testing (not using cv:Mat but <int> for example).
 		template<typename T>
 		class BufferedVideoIterator {
 		public:
 			BufferedVideoIterator() {};
 
-			BufferedVideoIterator(std::string videoFilePath) {
-				std::cout << "capturing:" << videoFilePath << std::endl;;
+			// TODO: build support for setting the amount of max_frames in the buffer.
+			BufferedVideoIterator(std::string videoFilePath, std::vector<std::vector<cv::Vec2f>> landmarks) {
+				std::ifstream file(videoFilePath);
 
-				std::ifstream file(videoFilePath, std::ios::binary);
-				if (file.fail()) {
+				if (!file.is_open()) {
 					throw std::runtime_error("Error opening given file: " + videoFilePath);
 				}
 
-				cv::VideoCapture tmp_cap(videoFilePath); // open the default camera
+				cv::VideoCapture tmp_cap(videoFilePath); // open video file
 
 				if (!tmp_cap.isOpened()) { // check if we succeeded
 					throw std::runtime_error("Could not play video");
 				}
 
 				cap = tmp_cap;
+				this->landmarks = landmarks;
 			}
 
-			std::deque <T> next() {
-				int frame_buffer_length = frame_buffer.size();
-				int landmark_landmark_length = landmark_buffer.size();
+			/**
+			 * Set next frame and return frame_buffer.
+			 *
+			 * @return dequeue<Mat> frame buffer.
+			 *
+			 * TODO: build support for returning landmarks AND frames.
+			 */
+			std::deque <Mat> next() {
+				long frame_buffer_length = frame_buffer.size();
+				long landmark_landmark_length = landmark_buffer.size();
 
 				// Get a new frame from camera.
 				Mat frame;
 				cap >> frame;
 
-				if (n_frames >= max_frames) {
+				// Pop if we exceeded max_frames.
+				if (n_frames > max_frames) {
 					frame_buffer.pop_front();
-					landmark_buffer.pop_front();
 				}
 
-				std::cout << "frame_buff" << frame.empty() << std::endl;
 				if (frame.empty() == 0) {
-					std::cout << "derpio" << std::endl;
-					frame_buffer.push_back(n_frames);
-					landmark_buffer.push_back(n_frames);
+					frame_buffer.push_back(frame);
 				}
-
-				std::cout << "frame_buff" << frame_buffer.empty() << std::endl;
 
 				n_frames++;
 
-
 				return frame_buffer;
 			}
 
-			std::deque <T> get_frame_buffer() {
+			std::deque <Mat> get_frame_buffer() {
 				return frame_buffer;
 			}
 
-			std::deque <T> get_landmark_buffer() {
+			std::deque <Mat> get_landmark_buffer() {
 				return landmark_buffer;
 			}
 
 		private:
 			cv::VideoCapture cap;
-			std::deque <T> frame_buffer;
-			std::deque <T> landmark_buffer;
+			std::deque <Mat> frame_buffer;
+			std::deque <Mat> landmark_buffer;
+			std::vector<std::vector<cv::Vec2f>> landmarks;
 
-			int n_frames = 0;
-			int max_frames = 5;
+			// TODO: make set-able
+			// load n_frames at once into the buffer.
+			long n_frames = 1;
+			// keep max_frames into the buffer.
+			long max_frames = 5;
 		};
 	}
 }
