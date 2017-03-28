@@ -1,7 +1,6 @@
 #include "catch.hpp"
 #include "test_helper.hpp"
 
-#include "glm/ext.hpp"
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtx/transform.hpp"
 
@@ -106,6 +105,7 @@ std::tuple<morphablemodel::MorphableModel, vector<Vec4f>, vector<int>, vector<Ve
 		LandmarkCollection<cv::Vec2f> landmarks, core::LandmarkMapper landmark_mapper) {
 	morphablemodel::MorphableModel morphable_model = loadTestModel();
 
+
 	// These will be the final 2D and 3D points used for the fitting:
 	vector<Vec4f> model_points; // the points in the 3D shape model
 	vector<int> vertex_indices; // their vertex indices
@@ -114,16 +114,12 @@ std::tuple<morphablemodel::MorphableModel, vector<Vec4f>, vector<int>, vector<Ve
 	// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
 	for (int i = 0; i < landmarks.size(); ++i) {
 		auto converted_name = landmark_mapper.convert(landmarks[i].name);
-
-		// no mapping defined for the current landmark
-		if (!converted_name) {
+		if (!converted_name) { // no mapping defined for the current landmark
 			continue;
 		}
-
 		int vertex_idx = std::stoi(converted_name.get());
-
-		Vec4f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
-		model_points.emplace_back(vertex);
+		auto vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
+		model_points.emplace_back(Vec4f(vertex.x(), vertex.y(), vertex.z(), 1.0f));
 		vertex_indices.emplace_back(vertex_idx);
 		image_points.emplace_back(landmarks[i].coordinates);
 	}
@@ -133,7 +129,7 @@ std::tuple<morphablemodel::MorphableModel, vector<Vec4f>, vector<int>, vector<Ve
 
 /**
  * Helper function to calculate the euclidean distance between the landmark and a projected
- * point. Nothing more than Pythogas.
+ * point. Nothing more than Pythagoras.
  *
  * @param landmark
  * @param vertex_screen_coords
@@ -152,11 +148,13 @@ inline float euclidean_distance(cv::Vec2f landmark, cv::Mat vertex_screen_coords
 
 TEST_CASE("Test ortographic projection", "[projection]" ){
 	// ======== begin setup ============
-	Mat image = cv::imread("data/image_0010.png");
+	// get prefix path to test resources
+	std::string prefixPath = getTestPrefixPath();
+	Mat image = cv::imread(prefixPath + "/bin/data/image_0010.png");
 
 	LandmarkCollection<cv::Vec2f> landmarks;
-	landmarks = read_pts_landmarks("data/image_0010.pts");
-	core::LandmarkMapper landmark_mapper = core::LandmarkMapper("../share/ibug2did.txt");
+	landmarks = read_pts_landmarks(prefixPath + "/bin/data/image_0010.pts");
+	core::LandmarkMapper landmark_mapper = core::LandmarkMapper(prefixPath + "/share/ibug2did.txt");
 
 	vector<Vec4f> model_points; // the points in the 3D shape model
 	vector<int> vertex_indices; // their vertex indices
@@ -179,7 +177,7 @@ TEST_CASE("Test ortographic projection", "[projection]" ){
 	);
 
 	// Obtain the full mesh with the estimated coefficients:
-	render::Mesh mesh = morphable_model.draw_sample(fitted_coeffs, vector<float>());
+	eos::core::Mesh mesh = morphable_model.draw_sample(fitted_coeffs, vector<float>());
 
 	// ======== end setup ============
 

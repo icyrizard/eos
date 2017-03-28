@@ -16,3 +16,9 @@
 [submodule "3rdparty/Catch"]
 	path = 3rdparty/Catch
 	url = https://github.com/philsquared/Catch.git
+[submodule "3rdparty/cereal"]
+	path = 3rdparty/cereal
+	url = https://github.com/USCiLab/cereal.git
+[submodule "3rdparty/eigen"]
+	path = 3rdparty/eigen
+	url = https://github.com/patrikhuber/eigen.git

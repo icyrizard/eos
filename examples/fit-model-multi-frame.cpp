@@ -17,8 +17,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "glm/ext.hpp"
-
 #include "eos/core/Landmark.hpp"
 #include "eos/core/LandmarkMapper.hpp"
 #include "eos/fitting/orthographic_camera_estimation_linear.hpp"
@@ -183,8 +181,8 @@ int main(int argc, char *argv[]) {
 			continue;
 		}
 		int vertex_idx = std::stoi(converted_name.get());
-		Vec4f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
-		model_points.emplace_back(vertex);
+		auto vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
+		model_points.emplace_back(Vec4f(vertex.x(), vertex.y(), vertex.z(), 1.0f));
 		vertex_indices.emplace_back(vertex_idx);
 		image_points.emplace_back(landmarks[i].coordinates);
 	}
@@ -210,14 +208,14 @@ int main(int argc, char *argv[]) {
 	);
 
 	// Obtain the full mesh with the estimated coefficients:
-	render::Mesh mesh = morphable_model.draw_sample(fitted_coeffs, vector<float>());
+	eos::core::Mesh mesh = morphable_model.draw_sample(fitted_coeffs, vector<float>());
 
 	// Extract the texture from the image using given mesh and camera parameters:
 	Mat isomap = render::extract_texture(mesh, affine_from_ortho, image);
 
 	// Save the mesh as textured obj:
 	outputfile += fs::path(".obj");
-	render::write_textured_obj(mesh, outputfile.string());
+	eos::core::write_textured_obj(mesh, outputfile.string());
 
 	// And save the isomap:
 	outputfile.replace_extension("isomap.png");

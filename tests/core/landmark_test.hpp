@@ -7,8 +7,8 @@
 #include "catch.hpp"
 
 
-TEST_CASE("Test 1 == 1", "[landmarks]") {
-	REQUIRE(1 == 1);
+TEST_CASE("Test 1 != 2", "[landmarks]") {
+	REQUIRE(1 != 2);
 }
 
 #endif //EOS_LANDMARK_TEST_H

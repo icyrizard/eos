@@ -123,7 +123,7 @@ int main(int argc, char *argv[])
 				"an input image")
 			("landmarks,l", po::value<fs::path>(&landmarksfile)->required()->default_value("data/image_0010.pts"),
 				"2D landmarks for the image, in ibug .pts format")
-			("mapping,p", po::value<fs::path>(&mappingsfile)->required()->default_value("../share/ibug2did.txt"),
+			("mapping,p", po::value<fs::path>(&mappingsfile)->required()->default_value("../share/ibug_to_sfm.txt"),
 				"landmark identifier to model vertex number mapping")
 			("output,o", po::value<fs::path>(&outputfile)->required()->default_value("out"),
 				"basename for the output rendering and obj files")
@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
 	catch (const po::error& e) {
 		cout << "Error while parsing command-line arguments: " << e.what() << endl;
 		cout << "Use --help to display a list of options." << endl;
-		return EXIT_SUCCESS;
+		return EXIT_FAILURE;
 	}
 
 	// Load the image, landmarks, LandmarkMapper and the Morphable Model:
@@ -181,8 +181,8 @@ int main(int argc, char *argv[])
 			continue;
 		}
 		int vertex_idx = std::stoi(converted_name.get());
-		Vec4f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
-		model_points.emplace_back(vertex);
+		auto vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
+		model_points.emplace_back(Vec4f(vertex.x(), vertex.y(), vertex.z(), 1.0f));
 		vertex_indices.emplace_back(vertex_idx);
 		image_points.emplace_back(landmarks[i].coordinates);
 	}
@@ -200,14 +200,14 @@ int main(int argc, char *argv[])
 	vector<float> fitted_coeffs = fitting::fit_shape_to_landmarks_linear(morphable_model, affine_from_ortho, image_points, vertex_indices);
 
 	// Obtain the full mesh with the estimated coefficients:
-	render::Mesh mesh = morphable_model.draw_sample(fitted_coeffs, vector<float>());
+	core::Mesh mesh = morphable_model.draw_sample(fitted_coeffs, vector<float>());
 
 	// Extract the texture from the image using given mesh and camera parameters:
 	Mat isomap = render::extract_texture(mesh, affine_from_ortho, image);
 
 	// Save the mesh as textured obj:
 	outputfile += fs::path(".obj");
-	render::write_textured_obj(mesh, outputfile.string());
+	core::write_textured_obj(mesh, outputfile.string());
 
 	// And save the isomap:
 	outputfile.replace_extension(".isomap.png");

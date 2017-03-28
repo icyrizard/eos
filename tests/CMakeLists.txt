@@ -46,7 +46,8 @@ include_directories(${CMAKE_SOURCE_DIR}/tests/include)
 set(EOS_TESTS_DIRS ${CMAKE_SOURCE_DIR}/tests/fitting ${CMAKE_SOURCE_DIR}/tests/core ${CMAKE_SOURCE_DIR}/tests/include "Paths to test include directories")
 
 add_executable (main-tests main_tests.cpp)
-target_link_libraries(main-tests Catch ${OpenCV_LIBS} ${Boost_LIBRARIES})
+target_link_libraries(main-tests Catch eos ${OpenCV_LIBS} ${Boost_LIBRARIES})
+target_link_libraries(main-tests "$<$<CXX_COMPILER_ID:GNU>:-pthread>$<$<CXX_COMPILER_ID:Clang>:-pthreads>")
 
 install(TARGETS main-tests DESTINATION tests)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/tests/data DESTINATION tests)

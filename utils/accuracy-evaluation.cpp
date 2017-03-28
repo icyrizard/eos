@@ -65,7 +65,7 @@ using namespace cv;
  * @param[in] viewport Viewport to draw the mesh.
  * @param[in] colour Colour of the mesh to be drawn.
  */
-void draw_wireframe(cv::Mat image, const eos::render::Mesh& mesh, glm::mat4x4 modelview, glm::mat4x4 projection, glm::vec4 viewport, cv::Scalar colour = cv::Scalar(0, 255, 0, 255))
+void draw_wireframe(cv::Mat image, const eos::core::Mesh& mesh, glm::mat4x4 modelview, glm::mat4x4 projection, glm::vec4 viewport, cv::Scalar colour = cv::Scalar(0, 255, 0, 255))
 {
 	for (const auto& triangle : mesh.tvi)
 	{
@@ -162,7 +162,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	// These will be the final 2D and 3D points used for the fitting:
-	vector<Vec4f> model_points; // the points in the 3D shape model
+	vector<Eigen::Vector3f > model_points; // the points in the 3D shape model
 	vector<int> vertex_indices; // their vertex indices
 	std::tie(model_points, vertex_indices) = eos::core::load_model_data(landmarks, morphable_model, landmark_mapper);
 
@@ -170,24 +170,24 @@ int main(int argc, char *argv[]) {
 	std::vector <std::vector<cv::Vec2f>> landmark_annotation_list = eos::core::load_annotations(annotations, mappingsfile);
 
 	try {
-		vid_iterator = bufferedvideoiterator<cv::mat>(videofile.string(), landmark_annotation_list);
+		vid_iterator = BufferedVideoIterator<cv::Mat>(videofile.string(), landmark_annotation_list);
 	} catch(std::runtime_error &e) {
 		cout << e.what() << endl;
-		return exit_failure;
+		return EXIT_FAILURE;
 	}
 
 
 	// todo: expand this to really perform some reconstruction, and move this to a test file.
 	// test with loading 10 frames subsequently.
 	// vid_iterator.next() will return a number of frames, depending on
-	std::deque<cv::mat> frames = vid_iterator.next();
+	std::deque<cv::Mat> frames = vid_iterator.next();
 	int count = 0;
 	while(!(frames.empty())) {
 		if (count == 10) {
 			break;
 		}
 		int frame_count = 0;
-		for (std::deque<cv::mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
+		for (std::deque<cv::Mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
 			//std::cout << ' ' << *it;
 			std::cout << frame_count << " ";
 			frame_count++;

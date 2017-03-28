@@ -1,4 +1,4 @@
-# Ignore the user-specific initial_cache file
+# Ignore (optional) configuration files with user-specific paths:
 initial_cache.cmake
 targets/*
 install/*
@@ -7,3 +7,4 @@ build/*
 examples/data/
 .idea/*
 cmake-build-debug/*
+setup.cfg

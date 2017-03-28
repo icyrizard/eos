@@ -90,10 +90,10 @@ namespace eos {
 		 * @param landmark_mapper
 		 * @return std::pair<std::vector<Vec4f>, std::vector<int> model_points and vertex_indices.
 		 */
-		std::pair <std::vector<Vec4f>, std::vector<int>>
+		std::pair <std::vector<Eigen::Vector3f>, std::vector<int>>
 		load_model_data(eos::core::LandmarkCollection<cv::Vec2f> landmarks,
 		                morphablemodel::MorphableModel morphable_model, eos::core::LandmarkMapper landmark_mapper) {
-			std::vector <cv::Vec4f> model_points;
+			std::vector <Eigen::Vector3f> model_points;
 			std::vector<int> vertex_indices;
 
 			// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
@@ -103,7 +103,7 @@ namespace eos {
 					continue;
 				}
 				int vertex_idx = std::stoi(converted_name.get());
-				Vec4f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
+				Eigen::Vector3f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
 				model_points.emplace_back(vertex);
 				vertex_indices.emplace_back(vertex_idx);
 			}
@@ -113,12 +113,12 @@ namespace eos {
 
 		/**
 		* Load annotations, return all annotations as image points (vectors of Vec2f).
-		 *
-		 * @param annotations
-		 * @param mappingsfile
-		 * @throws std::runtime_error in case of faulty annotation file
-		 * @return std::vector<std::vector<cv::Vec2f>> image_points in a vector of OpenCV float pairs (Vec2f).
-		 */
+		*
+		* @param annotations
+		* @param mappingsfile
+		* @throws std::runtime_error in case of faulty annotation file
+		* @return std::vector<std::vector<cv::Vec2f>> image_points in a vector of OpenCV float pairs (Vec2f).
+		*/
 		std::vector <std::vector<cv::Vec2f>> load_annotations(std::vector <std::string> annotations, fs::path mappingsfile) {
 			std::vector <std::vector<cv::Vec2f>> image_points; // the corresponding 2D landmark points of all annotation files.
 			eos::core::LandmarkMapper landmark_mapper = eos::core::LandmarkMapper(mappingsfile);

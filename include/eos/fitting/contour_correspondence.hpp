@@ -23,6 +23,7 @@
 #define CONTOURCORRESPONDENCE_HPP_
 
 #include "eos/core/Landmark.hpp"
+#include "eos/core/Mesh.hpp"
 #include "eos/morphablemodel/MorphableModel.hpp"
 
 #include "cereal/archives/json.hpp"
@@ -46,7 +47,7 @@ namespace eos {
 struct ModelContour;
 struct ContourLandmarks;
 std::pair<std::vector<std::string>, std::vector<int>> select_contour(float yaw_angle, const ContourLandmarks& contour_landmarks, const ModelContour& model_contour);
-std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_nearest_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const std::vector<std::string>& landmark_contour_identifiers, const std::vector<int>& model_contour_indices, const render::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport);
+std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_nearest_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const std::vector<std::string>& landmark_contour_identifiers, const std::vector<int>& model_contour_indices, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport);
 
 
 /**
@@ -116,11 +117,11 @@ struct ModelContour
  * This class holds 2D image contour landmark information. More specifically,
  * it defines which 2D landmark IDs correspond to the right contour and which
  * to the left. These definitions are loaded from a file, for example from
- * the "contour_landmarks" part of share/ibug2did.txt.
+ * the "contour_landmarks" part of share/ibug_to_sfm.txt.
  *
  * Note: Better names could be ContourDefinition or ImageContourLandmarks, to
  * disambiguate 3D and 2D landmarks?
- * Todo: I think this should go into the LandmarkMapper. Isn't it part of ibug2did.txt already?
+ * Todo: I think this should go into the LandmarkMapper. Isn't it part of ibug_to_sfm.txt already?
  */
 struct ContourLandmarks
 {
@@ -134,7 +135,7 @@ struct ContourLandmarks
 	
 	/**
 	 * Helper method to load contour landmarks from a text file with landmark
-	 * mappings, like ibug2did.txt.
+	 * mappings, like ibug_to_sfm.txt.
 	 *
 	 * @param[in] filename Filename to a landmark-mapping file.
 	 * @return A ContourLandmarks instance with loaded 2D contour landmarks.
@@ -200,7 +201,7 @@ struct ContourLandmarks
  * @param[in] viewport Current viewport to use.
  * @return A tuple with the 2D contour landmark points, the corresponding points in the 3D shape model and their vertex indices.
  */
-inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const ContourLandmarks& contour_landmarks, const ModelContour& model_contour, float yaw_angle, const render::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport)
+inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const ContourLandmarks& contour_landmarks, const ModelContour& model_contour, float yaw_angle, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport)
 {
 	// Select which side of the contour we'll use:
 	std::vector<int> model_contour_indices;
@@ -272,7 +273,7 @@ std::pair<std::vector<std::string>, std::vector<int>> select_contour(float yaw_a
  * @param[in] viewport Current viewport to use.
  * @return A tuple with the 2D contour landmark points, the corresponding points in the 3D shape model and their vertex indices.
  */
-inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_nearest_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const std::vector<std::string>& landmark_contour_identifiers, const std::vector<int>& model_contour_indices, const render::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport)
+inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_nearest_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const std::vector<std::string>& landmark_contour_identifiers, const std::vector<int>& model_contour_indices, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport)
 {
 	// These are the additional contour-correspondences we're going to find and then use!
 	std::vector<cv::Vec4f> model_points_cnt; // the points in the 3D shape model

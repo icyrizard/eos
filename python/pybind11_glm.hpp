@@ -9,22 +9,18 @@
 */
 #pragma once
 
-#include <cstddef>
+#include "glm/gtc/type_ptr.hpp" // includes all vector and matrix types too
 
 #include "pybind11/numpy.h"
 
-#include "glm/gtc/type_ptr.hpp" // includes all vector and matrix types too
-
-#if defined(_MSC_VER)
-#pragma warning(push)
-#pragma warning(disable: 4127) // warning C4127: Conditional expression is constant
-#endif
+#include <cstddef>
+#include <iostream> // would probably be better to use exceptions - but I think they were not showing in Python
 
 NAMESPACE_BEGIN(pybind11)
 NAMESPACE_BEGIN(detail)
 
 /**
- * @file utils/pybind11_glm.hpp
+ * @file python/pybind11_glm.hpp
  * @brief Transparent conversion to and from Python for glm vector and matrix types.
  *
  * All converters for matrices assume col-major storage of glm, the default.
@@ -44,7 +40,7 @@ struct type_caster<glm::tvec2<T, P>>
 	bool load(handle src, bool)
 	{
 		array_t<Scalar> buf(src, true);
-		if (!buf.check())
+		if (!buf)
 			return false;
 
 		if (buf.ndim() == 1) // a 1-dimensional vector
@@ -88,7 +84,7 @@ struct type_caster<glm::tvec3<T, P>>
 	bool load(handle src, bool)
 	{
 		array_t<Scalar> buf(src, true);
-		if (!buf.check())
+		if (!buf)
 			return false;
 
 		if (buf.ndim() == 1) // a 1-dimensional vector
@@ -132,7 +128,7 @@ struct type_caster<glm::tvec4<T, P>>
 	bool load(handle src, bool)
 	{
 		array_t<Scalar> buf(src, true);
-		if (!buf.check())
+		if (!buf)
 			return false;
 
 		if (buf.ndim() == 1) // a 1-dimensional vector
@@ -177,7 +173,7 @@ struct type_caster<glm::tmat3x3<T, P>>
 	bool load(handle src, bool)
 	{
 		array_t<Scalar> buf(src, true);
-		if (!buf.check())
+		if (!buf)
 			return false;
 
 		if (buf.ndim() == 2) // a 2-dimensional matrix
@@ -225,7 +221,7 @@ struct type_caster<glm::tmat4x3<T, P>>
 	bool load(handle src, bool)
 	{
 		array_t<Scalar> buf(src, true);
-		if (!buf.check())
+		if (!buf)
 			return false;
 
 		if (buf.ndim() == 2) // a 2-dimensional matrix
@@ -273,7 +269,7 @@ struct type_caster<glm::tmat4x4<T, P>>
 	bool load(handle src, bool)
 	{
 		array_t<Scalar> buf(src, true);
-		if (!buf.check())
+		if (!buf)
 			return false;
 
 		if (buf.ndim() == 2) // a 2-dimensional matrix
@@ -312,7 +308,3 @@ struct type_caster<glm::tmat4x4<T, P>>
 
 NAMESPACE_END(detail)
 NAMESPACE_END(pybind11)
-
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
