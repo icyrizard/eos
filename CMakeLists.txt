@@ -75,7 +75,7 @@ set(HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/core/Landmark.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/core/LandmarkMapper.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/core/Mesh.hpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/core/BufferedVideoIterator.hpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/video/BufferedVideoIterator.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/core/landmark_utils.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/morphablemodel/PcaModel.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/morphablemodel/MorphableModel.hpp

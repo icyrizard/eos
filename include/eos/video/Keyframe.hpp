@@ -26,8 +26,11 @@
 #include "eos/fitting/RenderingParameters.hpp"
 #include "eos/morphablemodel/Blendshape.hpp"
 #include "eos/morphablemodel/MorphableModel.hpp"
+#include "eos/render/texture_extraction.hpp"
 
 #include "opencv2/core/core.hpp"
+
+#include <deque>
 
 namespace eos {
 namespace video {
@@ -37,21 +40,54 @@ namespace video {
  *
  * Contains the original frame, all necessary fitting parameters, and a score.
  */
-struct Keyframe
-{
-    float score; // = 0.0f?
-    cv::Mat frame;
-    fitting::FittingResult fitting_result;
+struct Keyframe {
+public:
+	Keyframe() {}
+	/**
+	 * Only used when only a frame is available.
+	 *
+	 * @param frame
+	 */
+	Keyframe(cv::Mat frame) {
+		this->frame = frame;
+	}
+
+	/**
+	 * Only used when score and frame is available
+	 *
+	 * @param frame
+	 * @param score
+	 */
+	Keyframe(float score, cv::Mat frame) {
+		this->score = score;
+		this->frame = frame;
+	}
+
+	/**
+	 *
+	 * @param score
+	 * @param frame
+	 * @param fitting_result
+	 */
+	Keyframe(float score, cv::Mat frame, fitting::FittingResult fitting_result) {
+		this->frame = frame;
+		this->score = score;
+		this->fitting_result = fitting_result;
+	}
+
+	float score = 0.0f;
+	cv::Mat frame;
+	fitting::FittingResult fitting_result;
 };
 
 /**
  * @brief A keyframe selection that selects keyframes according to yaw pose and score.
  *
- * Separates the +-90° yaw pose range into 20° intervals (i.e. 90 to 70, ..., -10 to 10, ...), and puts frames
+ * Separates the +-90ï¿½ yaw pose range into 20ï¿½ intervals (i.e. 90 to 70, ..., -10 to 10, ...), and puts frames
  * into each bin, until full. Replaces keyframes with better frames if the score is higher than that of
  * current keyframes.
  *
- * The yaw pose bins are currently hard-coded (9 bins, 20° intervals).
+ * The yaw pose bins are currently hard-coded (9 bins, 20ï¿½ intervals).
  */
 struct PoseBinningKeyframeSelector
 {
@@ -112,7 +148,7 @@ private:
     int frames_per_bin;
 
     // Converts a given yaw angle to an index in the internal bins vector.
-    // Assumes 9 bins and 20° intervals.
+    // Assumes 9 bins and 20ï¿½ intervals.
     static std::size_t angle_to_index(float yaw_angle)
     {
         if (yaw_angle <= -70.f)
@@ -167,21 +203,24 @@ cv::Mat merge_weighted_mean(const std::vector<Keyframe>& keyframes,
     using cv::Mat;
     using std::vector;
 
-    vector<Mat> isomaps;
-    for (const auto& frame_data : keyframes)
-    {
-        const Mat shape =
-            morphable_model.get_shape_model().draw_sample(frame_data.fitting_result.pca_shape_coefficients) +
-            morphablemodel::to_matrix(blendshapes) * Mat(frame_data.fitting_result.blendshape_coefficients);
-        const auto mesh =
-            morphablemodel::sample_to_mesh(shape, {}, morphable_model.get_shape_model().get_triangle_list(),
-                                           {}, morphable_model.get_texture_coordinates());
-        const Mat affine_camera_matrix = fitting::get_3x4_affine_camera_matrix(
-            frame_data.fitting_result.rendering_parameters, frame_data.frame.cols, frame_data.frame.rows);
-        const Mat isomap = render::extract_texture(mesh, affine_camera_matrix, frame_data.frame, true,
-                                                   render::TextureInterpolation::NearestNeighbour, 1024);
-        isomaps.push_back(isomap);
-    }
+	vector<Mat> isomaps;
+	for (const auto& frame_data : keyframes) {
+	//		VectorXf current_pca_shape = morphable_model.get_shape_model().draw_sample(frame_data.fitting_result.pca_shape_coefficients);
+	//		const current_combined_shape = current_pca_shape + morphablemodel::to_matrix(blendshapes) * Eigen::Map<const Eigen::VectorXf>(frame_data.fitting_result.blendshape_coefficients);
+		const Eigen::VectorXf shape =
+			morphable_model.get_shape_model().draw_sample(frame_data.fitting_result.pca_shape_coefficients) +
+			morphablemodel::to_matrix(blendshapes) * morphablemodel::to_vector(frame_data.fitting_result.blendshape_coefficients);
+		const auto mesh =
+			morphablemodel::sample_to_mesh(
+					shape, {}, morphable_model.get_shape_model().get_triangle_list(), {}, morphable_model.get_texture_coordinates());
+		const Mat affine_camera_matrix = fitting::get_3x4_affine_camera_matrix(
+			frame_data.fitting_result.rendering_parameters, frame_data.frame.cols, frame_data.frame.rows
+		);
+		const Mat isomap = render::extract_texture(
+			mesh, affine_camera_matrix, frame_data.frame, true, render::TextureInterpolation::NearestNeighbour, 1024
+		);
+		isomaps.push_back(isomap);
+	}
 
     // Now do the actual merging:
     Mat r = Mat::zeros(isomaps[0].rows, isomaps[0].cols, CV_32FC1);
@@ -246,6 +285,113 @@ double variance_of_laplacian(const cv::Mat& image)
 
     double focus_measure = sigma.val[0] * sigma.val[0];
     return focus_measure;
+};
+
+/**
+ * BufferedVideo Iterator will keep a buffer of the last seen n_frames. By calling .next() it will load a new
+ * frame from the given video and you will get a pointer to the front of the buffer (which has n_frames).
+ *
+ * Just imagine a sliding window accross the video, this is what we aim to implement here.
+ *
+ * Example:
+ *    vid_iterator = bufferedvideoiterator<cv::mat>(videofile.string(), landmark_annotation_list);
+ *
+ *    std::deque<cv::mat> frames = vid_iterator.next();
+ *    while(!(frames.empty())) {
+ *        for (std::deque<cv::mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
+ *            std::cout << ' ' << *it;
+ *        }
+ *
+ *         frames = vid_iterator.next();
+ *    }
+ *
+ * @tparam T
+ */
+// Note for this template: later we can use other templates for easy testing (not using cv:Mat but <int> for example).
+class BufferedVideoIterator {
+public:
+	int width;
+	int height;
+
+	BufferedVideoIterator() {};
+
+	// TODO: build support for setting the amount of max_frames in the buffer.
+	BufferedVideoIterator(std::string videoFilePath, int max_frames = 5, int min_frames = 4) {
+		std::ifstream file(videoFilePath);
+
+		if (!file.is_open()) {
+			throw std::runtime_error("Error opening given file: " + videoFilePath);
+		}
+
+		cv::VideoCapture cap(videoFilePath); // open video file
+
+		if (!cap.isOpened()) { // check if we succeeded
+			throw std::runtime_error("Could not play video");
+		}
+
+		width = static_cast<int>(cap.get(CV_CAP_PROP_FRAME_HEIGHT));
+		height = static_cast<int>(cap.get(CV_CAP_PROP_FRAME_HEIGHT));
+
+		this->max_frames = max_frames;
+		this->min_frames = min_frames;
+	}
+
+	/**
+	 * Set next frame and return frame_buffer.
+	 *
+	 * @return dequeue<Mat> frame buffer.
+	 *
+	 * TODO: build support for returning landmarks AND frames.
+	 */
+	std::deque <Keyframe> next() {
+		long frame_buffer_length = frame_buffer.size();
+
+		// Get a new frame from camera.
+		cv::Mat frame;
+		cap >> frame;
+
+		// Pop if we exceeded max_frames.
+		if (n_frames > max_frames) {
+			frame_buffer.pop_front();
+		}
+
+		float lap_score = static_cast<float>(variance_of_laplacian(frame));
+
+		if (lap_score < laplacian_threshold) {
+			frame_buffer.push_back(Keyframe(lap_score, frame));
+		}
+
+		n_frames++;
+
+		if(frame_buffer_length + 1 < min_frames) {
+			frame_buffer = next();
+		}
+
+		return frame_buffer;
+	}
+
+	std::deque <Keyframe> get_frame_buffer() {
+		return frame_buffer;
+	}
+
+private:
+	cv::VideoCapture cap;
+	std::deque<Keyframe> frame_buffer;
+
+	// TODO: make set-able
+	// total frames in buffer
+	long n_frames = 1;
+
+	// min frames to load at the start.
+	long min_frames = 3;
+	// keep max_frames into the buffer.
+	long max_frames = 5;
+
+	// Note: these settings are for future use
+	int drop_frames = 0;
+
+	// laplacian threshold
+	double laplacian_threshold = 10000000;
 };
 
 } /* namespace video */

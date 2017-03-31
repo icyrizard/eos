@@ -10,6 +10,7 @@
 
 #include "eos/morphablemodel/morphablemodel.hpp"
 #include "eos/core/LandmarkMapper.hpp"
+#include "eos/core/Landmark.hpp"
 
 #include "boost/filesystem.hpp"
 
@@ -38,10 +39,11 @@ namespace fs = boost::filesystem;
  */
 namespace eos {
 	namespace core {
-		eos::core::LandmarkCollection <cv::Vec2f> read_pts_landmarks(std::string filename) {
+		template<typename vec2f>
+		eos::core::LandmarkCollection <vec2f> read_pts_landmarks(std::string filename) {
 			using std::getline;
 
-			LandmarkCollection <Vec2f> landmarks;
+			LandmarkCollection<vec2f> landmarks;
 			landmarks.reserve(68);
 
 			std::ifstream file(filename);
@@ -62,7 +64,7 @@ namespace eos {
 				}
 
 				std::stringstream lineStream(line);
-				Landmark <Vec2f> landmark;
+				Landmark <vec2f> landmark;
 				landmark.name = std::to_string(ibugId);
 
 				if (!(lineStream >> landmark.coordinates[0] >> landmark.coordinates[1])) {
@@ -90,10 +92,11 @@ namespace eos {
 		 * @param landmark_mapper
 		 * @return std::pair<std::vector<Vec4f>, std::vector<int> model_points and vertex_indices.
 		 */
-		std::pair <std::vector<Eigen::Vector3f>, std::vector<int>>
-		load_model_data(eos::core::LandmarkCollection<cv::Vec2f> landmarks,
+		template<typename vec2f, typename vec3f>
+		std::pair <std::vector<vec2f>, std::vector<int>>
+		load_model_data(eos::core::LandmarkCollection<vec2f> landmarks,
 		                morphablemodel::MorphableModel morphable_model, eos::core::LandmarkMapper landmark_mapper) {
-			std::vector <Eigen::Vector3f> model_points;
+			std::vector <vec3f> model_points;
 			std::vector<int> vertex_indices;
 
 			// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
@@ -103,7 +106,7 @@ namespace eos {
 					continue;
 				}
 				int vertex_idx = std::stoi(converted_name.get());
-				Eigen::Vector3f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
+				vec3f vertex = morphable_model.get_shape_model().get_mean_at_point(vertex_idx);
 				model_points.emplace_back(vertex);
 				vertex_indices.emplace_back(vertex_idx);
 			}
@@ -119,34 +122,33 @@ namespace eos {
 		* @throws std::runtime_error in case of faulty annotation file
 		* @return std::vector<std::vector<cv::Vec2f>> image_points in a vector of OpenCV float pairs (Vec2f).
 		*/
-		std::vector <std::vector<cv::Vec2f>> load_annotations(std::vector <std::string> annotations, fs::path mappingsfile) {
-			std::vector <std::vector<cv::Vec2f>> image_points; // the corresponding 2D landmark points of all annotation files.
+		template<typename vec2f, typename vec3f>
+		std::vector<core::LandmarkCollection<vec2f>> load_annotations(std::vector <std::string> annotations, fs::path mappingsfile) {
+			//std::vector <std::vector<vec2f>> image_points; // the corresponding 2D landmark points of all annotation files.
 			eos::core::LandmarkMapper landmark_mapper = eos::core::LandmarkMapper(mappingsfile);
+			std::vector<core::LandmarkCollection<vec2f>> landmark_collection_list;
 
 			// These will be the final 2D and 3D points used for the fitting:
-			std::vector <Vec4f> model_points; // the points in the 3D shape model
+			std::vector <vec3f> model_points; // the points in the 3D shape model
 			std::vector<int> vertex_indices; // their vertex indices
 
 			for (int i = 0; i < annotations.size(); i++) {
-				eos::core::LandmarkCollection <cv::Vec2f> landmarks;
+				eos::core::LandmarkCollection <vec2f> landmarks;
 
 				try {
-					landmarks = read_pts_landmarks(annotations[i]);
-				}
-				catch (const std::runtime_error &e) {
+					landmarks = read_pts_landmarks<vec2f>(annotations[i]);
+				} catch (const std::runtime_error &e) {
 					std::cout << e.what() << std::endl;
 					throw std::runtime_error("Error reading the landmarks:  " + annotations[i]);
 				}
 
-				std::vector <cv::Vec2f> image_points_tmp;
-
 				// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
 				for (int j = 0; j < landmarks.size(); j++) {
-					image_points_tmp.emplace_back(landmarks[i].coordinates);
+					landmark_collection_list.emplace_back(landmarks);
 				}
 			}
 
-			return image_points;
+			return landmark_collection_list;
 		}
 	}
 }

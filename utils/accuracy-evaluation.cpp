@@ -16,15 +16,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "eos/core/Landmark.hpp"
-#include "eos/core/LandmarkMapper.hpp"
 #include "eos/core/landmark_utils.hpp"
-#include "eos/core/BufferedVideoIterator.hpp"
 #include "eos/morphablemodel/morphablemodel.hpp"
 #include "eos/morphablemodel/blendshape.hpp"
 #include "eos/fitting/fitting.hpp"
 #include "eos/render/utils.hpp"
 #include "eos/render/texture_extraction.hpp"
+#include "eos/video/Keyframe.hpp"
 
 #include "opencv2/core/core.hpp"
 #include "opencv2/opencv.hpp"
@@ -42,7 +40,7 @@ namespace po = boost::program_options;
 namespace fs = boost::filesystem;
 using eos::core::Landmark;
 using eos::core::LandmarkCollection;
-using eos::core::BufferedVideoIterator;
+using eos::video::BufferedVideoIterator;
 using cv::Mat;
 using cv::Vec2f;
 using cv::Vec3f;
@@ -121,83 +119,115 @@ int main(int argc, char *argv[]) {
 		po::variables_map vm;
 		po::store(po::command_line_parser(argc, argv).options(desc).run(), vm);
 		if (vm.count("help")) {
-			cout << "Usage: fit-model [options]" << endl;
-			cout << desc;
+			std::cout << "Usage: fit-model [options]" << std::endl;
+			std::cout << desc;
 			return EXIT_SUCCESS;
 		}
 		po::notify(vm);
 	}
 	catch (const po::error &e) {
-		cout << "Error while parsing command-line arguments: " << e.what() << endl;
-		cout << "Use --help to display a list of options." << endl;
+		std::cout << "Error while parsing command-line arguments: " << e.what() << std::endl;
+		std::cout << "Use --help to display a list of options." << std::endl;
 		return EXIT_SUCCESS;
 	}
 
+	// start loading prerequisites
+	morphablemodel::MorphableModel morphable_model;
 	try {
-		vector <vector<Vec2f>> multi_frame_points = eos::core::load_annotations(annotations, mappingsfile);
+		morphable_model = morphablemodel::load_model(modelfile.string());
+	} catch (const std::runtime_error &e) {
+		std::cout << "Error loading the Morphable Model: " << e.what() << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	// load all annotation files into lists of landmarks
+	vector<core::LandmarkCollection<cv::Vec2f>> landmark_list;
+	try {
+		landmark_list = eos::core::load_annotations<cv::Vec2f, cv::Vec3f>(annotations, mappingsfile);
 	} catch(const std::runtime_error &e) {
 		std::cout << e.what() << std::endl;
 		return EXIT_FAILURE;
 	}
 
+	// The expression blendshapes:
+	vector<morphablemodel::Blendshape> blend_shapes = morphablemodel::load_blendshapes(blendshapesfile.string());
+
+	// These two are used to fit the front-facing contour to the ibug contour landmarks:
+	fitting::ModelContour model_contour = contourfile.empty() ? fitting::ModelContour() : fitting::ModelContour::load(contourfile.string());
+	fitting::ContourLandmarks ibug_contour = fitting::ContourLandmarks::load(mappingsfile.string());
+
+	// The edge topology is used to speed up computation of the occluding face contour fitting:
+	morphablemodel::EdgeTopology edge_topology = morphablemodel::load_edge_topology(edgetopologyfile.string());
+
 	// Load landmarks, LandmarkMapper and the Morphable Model:
 	LandmarkCollection <cv::Vec2f> landmarks;
 	core::LandmarkMapper landmark_mapper = core::LandmarkMapper(mappingsfile);
 
-	try {
-		landmarks = eos::core::read_pts_landmarks(annotations[0]);
-	}
-	catch (const std::runtime_error &e) {
-		cout << "Error reading the landmarks: " << e.what() << endl;
-		return EXIT_FAILURE;
-	}
-
-	morphablemodel::MorphableModel morphable_model;
-
-	try {
-		morphable_model = morphablemodel::load_model(modelfile.string());
-	} catch (const std::runtime_error &e) {
-		std::cout << "Error loading the Morphable Model: " << e.what() << std::endl;
-			return EXIT_FAILURE;
-	}
-
 	// These will be the final 2D and 3D points used for the fitting:
-	vector<Eigen::Vector3f > model_points; // the points in the 3D shape model
+	vector<cv::Vec3f> model_points; // the points in the 3D shape model
 	vector<int> vertex_indices; // their vertex indices
-	std::tie(model_points, vertex_indices) = eos::core::load_model_data(landmarks, morphable_model, landmark_mapper);
 
-	BufferedVideoIterator<cv::Mat> vid_iterator;
-	std::vector <std::vector<cv::Vec2f>> landmark_annotation_list = eos::core::load_annotations(annotations, mappingsfile);
+	vector<core::Mesh> meshs;
+	vector<fitting::RenderingParameters> rendering_paramss;
 
+//	std::tie(model_points, vertex_indices) = eos::core::load_model_data<cv::Vec2f, cv::Vec3f>(landmarks, morphable_model, landmark_mapper);
+
+	BufferedVideoIterator vid_iterator;
 	try {
-		vid_iterator = BufferedVideoIterator<cv::Mat>(videofile.string(), landmark_annotation_list);
+		vid_iterator = BufferedVideoIterator(videofile.string());
 	} catch(std::runtime_error &e) {
-		cout << e.what() << endl;
+		std::cout << e.what() << std::endl;
 		return EXIT_FAILURE;
 	}
 
+	// iteration count
+	int frame_width = vid_iterator.width;
+	int frame_height = vid_iterator.height;
 
-	// todo: expand this to really perform some reconstruction, and move this to a test file.
 	// test with loading 10 frames subsequently.
-	// vid_iterator.next() will return a number of frames, depending on
-	std::deque<cv::Mat> frames = vid_iterator.next();
-	int count = 0;
+	std::deque<eos::video::Keyframe> frames = vid_iterator.next();
+
+	std::vector<float> pca_shape_coefficients;
+	std::vector<std::vector<float>> blend_shape_coefficients;
+	std::vector<std::vector<cv::Vec2f>> fitted_image_points;
+
+	int n_frames = static_cast<int>(frames.size());
 	while(!(frames.empty())) {
-		if (count == 10) {
+		if (n_frames == 100) {
 			break;
 		}
-		int frame_count = 0;
-		for (std::deque<cv::Mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
-			//std::cout << ' ' << *it;
-			std::cout << frame_count << " ";
-			frame_count++;
-		}
 
-		std::cout << std::endl << "frames processed: " << count * frame_count << std::endl;
+		int frame_count = 0;
+		std::cout << std::endl << "frames in buffer: " << frames.size() << std::endl;
+		std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi(
+				morphable_model,
+				blend_shapes,
+				landmark_list,
+				landmark_mapper,
+				frame_width,
+				frame_height,
+				static_cast<int>(frames.size()),
+				edge_topology,
+				ibug_contour,
+				model_contour,
+				50,
+				boost::none,
+				30.0f,
+				boost::none,
+				pca_shape_coefficients,
+				blend_shape_coefficients,
+				fitted_image_points
+		);
 
 		frames = vid_iterator.next();
-		usleep(10);
-		count++;
+
+		n_frames++;
+
+//		// iterator through all frames, not needed persee.
+//		for (std::deque<eos::video::Keyframe>::iterator it = frames.begin(); it!=frames.end(); ++it) {
+//			std::cout << it->score << " ";
+//			frame_count++;
+//		}
 	}
 }
 
