@@ -43,7 +43,7 @@ using namespace std;
 
 namespace eos {
 	namespace video {
-		// TODO: maybe move video iterator here.. or remove file.
+		// TODO: maybe move video iterator here.. or remove fil.
 	}
 }
 

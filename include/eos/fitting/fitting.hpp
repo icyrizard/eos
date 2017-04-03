@@ -464,6 +464,7 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 				std::vector<float>& pca_shape_coefficients,
 				std::vector<std::vector<float>>& blendshape_coefficients,
 				std::vector<std::vector<cv::Vec2f>>& fitted_image_points) {
+
 	assert(blendshapes.size() > 0);
 	assert(num_iterations > 0); // Can we allow 0, for only the initial pose-fit?
 	assert(pca_shape_coefficients.size() <= morphable_model.get_shape_model().get_num_principal_components());
@@ -474,7 +475,6 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 	using cv::Mat;
 	using Eigen::VectorXf;
 	using Eigen::MatrixXf;
-
 
 	if (!num_shape_coefficients_to_fit) {
 		num_shape_coefficients_to_fit = morphable_model.get_shape_model().get_num_principal_components();
@@ -691,6 +691,26 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 	);
 };
 
+inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParameters>> fit_shape_and_pose_multi_2(
+		const morphablemodel::MorphableModel& morphable_model,
+		const std::vector<morphablemodel::Blendshape>& blendshapes,
+		const std::vector<core::LandmarkCollection<cv::Vec2f>>& landmarks,
+		const core::LandmarkMapper& landmark_mapper,
+		int image_width,
+		int image_height,
+		int num_images,
+		const morphablemodel::EdgeTopology& edge_topology,
+		const fitting::ContourLandmarks& contour_landmarks,
+		const fitting::ModelContour& model_contour,
+		int num_iterations,
+		boost::optional<int> num_shape_coefficients_to_fit,
+		float lambda,
+		boost::optional<fitting::RenderingParameters> initial_rendering_params,
+		std::vector<float>& pca_shape_coefficients,
+		std::vector<std::vector<float>>& blendshape_coefficients,
+		std::vector<std::vector<cv::Vec2f>>& fitted_image_points) {
+
+}
 	} /* namespace fitting */
 } /* namespace eos */
 

@@ -58,9 +58,10 @@ public:
 	 * @param frame
 	 * @param score
 	 */
-	Keyframe(float score, cv::Mat frame) {
+	Keyframe(float score, cv::Mat frame, int frame_number) {
 		this->score = score;
 		this->frame = frame;
+		this->frame_number = frame_number;
 	}
 
 	/**
@@ -78,6 +79,7 @@ public:
 	float score = 0.0f;
 	cv::Mat frame;
 	fitting::FittingResult fitting_result;
+	int frame_number;
 };
 
 /**
@@ -319,19 +321,18 @@ public:
 	BufferedVideoIterator(std::string videoFilePath, int max_frames = 5, int min_frames = 4) {
 		std::ifstream file(videoFilePath);
 
+		std::cout << "video file path: " << videoFilePath << std::endl;
 		if (!file.is_open()) {
 			throw std::runtime_error("Error opening given file: " + videoFilePath);
 		}
 
-		cv::VideoCapture cap(videoFilePath); // open video file
+		cv::VideoCapture tmp_cap(videoFilePath); // open video file
 
-		if (!cap.isOpened()) { // check if we succeeded
+		if (!tmp_cap.isOpened()) { // check if we succeeded
 			throw std::runtime_error("Could not play video");
 		}
 
-		width = static_cast<int>(cap.get(CV_CAP_PROP_FRAME_HEIGHT));
-		height = static_cast<int>(cap.get(CV_CAP_PROP_FRAME_HEIGHT));
-
+		this->cap = tmp_cap;
 		this->max_frames = max_frames;
 		this->min_frames = min_frames;
 	}
@@ -350,15 +351,22 @@ public:
 		cv::Mat frame;
 		cap >> frame;
 
+		if (frame.empty()) {
+			frame_buffer = next();
+			return frame_buffer;
+		}
+
 		// Pop if we exceeded max_frames.
 		if (n_frames > max_frames) {
 			frame_buffer.pop_front();
+			n_frames--;
 		}
 
 		float lap_score = static_cast<float>(variance_of_laplacian(frame));
 
 		if (lap_score < laplacian_threshold) {
-			frame_buffer.push_back(Keyframe(lap_score, frame));
+			total_frames_processed++;
+			frame_buffer.push_back(Keyframe(lap_score, frame, total_frames_processed));
 		}
 
 		n_frames++;
@@ -379,11 +387,13 @@ private:
 	std::deque<Keyframe> frame_buffer;
 
 	// TODO: make set-able
+	long total_frames_processed = 1;
 	// total frames in buffer
 	long n_frames = 1;
 
 	// min frames to load at the start.
 	long min_frames = 3;
+
 	// keep max_frames into the buffer.
 	long max_frames = 5;
 
@@ -392,6 +402,78 @@ private:
 
 	// laplacian threshold
 	double laplacian_threshold = 10000000;
+};
+
+/**
+* @brief Merges isomaps from a live video with a weighted averaging, based
+* on the view angle of each vertex to the camera.
+*
+* An optional merge_threshold can be specified upon construction. Pixels with
+* a view-angle above that threshold will be completely discarded. All pixels
+* below the threshold are merged with a weighting based on its vertex view-angle.
+* Assumes the isomaps to be 512x512.
+*/
+class WeightedIsomapAveraging
+{
+public:
+	/**
+	 * @brief Constructs a new object that will hold the current averaged isomap and
+	 * be able to add frames from a live video and merge them on-the-fly.
+	 *
+	 * The threshold means: Each triangle with a view angle smaller than the given angle will be used to merge.
+	 * The default threshold (90°) means all triangles, as long as they're a little bit visible, are merged.
+	 *
+	 * @param[in] merge_threshold View-angle merge threshold, in degrees, from 0 to 90.
+	 */
+	WeightedIsomapAveraging(float merge_threshold = 90.0f)
+	{
+		assert(merge_threshold >= 0.f && merge_threshold <= 90.f);
+
+		visibility_counter = cv::Mat::zeros(512, 512, CV_32SC1);
+		merged_isomap = cv::Mat::zeros(512, 512, CV_32FC4);
+
+		// map 0° to 255, 90° to 0:
+		float alpha_thresh = (-255.f / 90.f) * merge_threshold + 255.f;
+		if (alpha_thresh < 0.f) // could maybe happen due to float inaccuracies / rounding?
+			alpha_thresh = 0.0f;
+		threshold = static_cast<unsigned char>(alpha_thresh);
+	};
+
+	/**
+	 * @brief Merges the given new isomap with all previously processed isomaps.
+	 *
+	 * @param[in] isomap The new isomap to add.
+	 * @return The merged isomap of all images processed so far, as 8UC4.
+	 */
+	cv::Mat add_and_merge(const cv::Mat& isomap)
+	{
+		// Merge isomaps, add the current to the already merged, pixel by pixel:
+		for (int r = 0; r < isomap.rows; ++r)
+		{
+			for (int c = 0; c < isomap.cols; ++c)
+			{
+				if (isomap.at<cv::Vec4b>(r, c)[3] <= threshold)
+				{
+					continue; // ignore this pixel, not visible in the extracted isomap of this current frame
+				}
+				// we're sure to have a visible pixel, merge it:
+				// merged_pixel = (old_average * visible_count + new_pixel) / (visible_count + 1)
+				merged_isomap.at<cv::Vec4f>(r, c)[0] = (merged_isomap.at<cv::Vec4f>(r, c)[0] * visibility_counter.at<int>(r, c) + isomap.at<cv::Vec4b>(r, c)[0]) / (visibility_counter.at<int>(r, c) + 1);
+				merged_isomap.at<cv::Vec4f>(r, c)[1] = (merged_isomap.at<cv::Vec4f>(r, c)[1] * visibility_counter.at<int>(r, c) + isomap.at<cv::Vec4b>(r, c)[1]) / (visibility_counter.at<int>(r, c) + 1);
+				merged_isomap.at<cv::Vec4f>(r, c)[2] = (merged_isomap.at<cv::Vec4f>(r, c)[2] * visibility_counter.at<int>(r, c) + isomap.at<cv::Vec4b>(r, c)[2]) / (visibility_counter.at<int>(r, c) + 1);
+				merged_isomap.at<cv::Vec4f>(r, c)[3] = 255; // as soon as we've seen the pixel visible once, we set it to visible.
+				++visibility_counter.at<int>(r, c);
+			}
+		}
+		cv::Mat merged_isomap_uchar;
+		merged_isomap.convertTo(merged_isomap_uchar, CV_8UC4);
+		return merged_isomap_uchar;
+	};
+
+private:
+	cv::Mat visibility_counter;
+	cv::Mat merged_isomap;
+	unsigned char threshold;
 };
 
 } /* namespace video */

@@ -85,6 +85,29 @@ namespace eos {
 		}
 
 		/**
+		 * Read strings from a given file and return them as a vector of strings.
+		 *
+		 * @param filename
+		 * @return
+		 */
+		std::vector<std::string> file_to_string_vector(std::string filename) {
+			std::ifstream file(filename);
+			if (!file.is_open()) {
+				throw std::runtime_error(string("Could not open annotation list file: " + filename));
+			}
+
+			string line;
+			std::vector<std::string> output;
+
+			while (getline(file, line)) {
+				std::cout << line << std::endl;
+				output.push_back(line);
+			}
+
+			return output;
+		}
+
+		/**
 		 * Helper function, gathers matching model_points with given landmarks and LandmarkMapper.
 		 *
 		 * @param landmarks
@@ -115,22 +138,32 @@ namespace eos {
 		}
 
 		/**
-		* Load annotations, return all annotations as image points (vectors of Vec2f).
+		* Load annotations, return all annotations as a vector of LandmarkCollection (vectors of Vec2f).
+		* Supports either a given template, any cv::Vec2f / Eigen::Vector2f will work.
 		*
+		* Returns the annotations as a list of files, useful for later use if read_from_file flag is set to true.
+		* This flag will read the filepaths from the given annotation file, probably depends on the command line args.
+		*
+		* @tparam vec2f
 		* @param annotations
-		* @param mappingsfile
-		* @throws std::runtime_error in case of faulty annotation file
-		* @return std::vector<std::vector<cv::Vec2f>> image_points in a vector of OpenCV float pairs (Vec2f).
+		* @param mapper
+		* @param morphable_model
+		* @param read_from_file
+		* @return
 		*/
-		template<typename vec2f, typename vec3f>
-		std::vector<core::LandmarkCollection<vec2f>> load_annotations(std::vector <std::string> annotations, fs::path mappingsfile) {
-			//std::vector <std::vector<vec2f>> image_points; // the corresponding 2D landmark points of all annotation files.
-			eos::core::LandmarkMapper landmark_mapper = eos::core::LandmarkMapper(mappingsfile);
+		template<typename vec2f>
+		std::pair <std::vector<core::LandmarkCollection<vec2f>>, std::vector<std::string>>
+		load_annotations(
+				std::vector<std::string>annotations,
+				core::LandmarkMapper mapper, morphablemodel::MorphableModel morphable_model, bool read_from_file = false) {
 			std::vector<core::LandmarkCollection<vec2f>> landmark_collection_list;
 
-			// These will be the final 2D and 3D points used for the fitting:
-			std::vector <vec3f> model_points; // the points in the 3D shape model
-			std::vector<int> vertex_indices; // their vertex indices
+			// load file names from one file.
+			std::vector<std::string> annotation_files;
+
+			if (read_from_file) {
+				annotations = file_to_string_vector(annotations[0]);
+			}
 
 			for (int i = 0; i < annotations.size(); i++) {
 				eos::core::LandmarkCollection <vec2f> landmarks;
@@ -142,13 +175,17 @@ namespace eos {
 					throw std::runtime_error("Error reading the landmarks:  " + annotations[i]);
 				}
 
+				core::LandmarkCollection<vec2f> image_points;
+
 				// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
-				for (int j = 0; j < landmarks.size(); j++) {
-					landmark_collection_list.emplace_back(landmarks);
+				for (int i = 0; i < landmarks.size(); ++i) {
+					image_points.emplace_back(landmarks[i]);
 				}
+
+				landmark_collection_list.push_back(image_points);
 			}
 
-			return landmark_collection_list;
+			return std::make_pair(landmark_collection_list, annotations);
 		}
 	}
 }
