@@ -206,7 +206,7 @@ void evaluate_results(
 				rendering_paramss[i].get_modelview(),
 				rendering_paramss[i].get_projection(),
 				fitting::get_opencv_viewport(frame_width, frame_height)
-		)
+		);
 
 		std::string outputfile = fs::path(annotations[frame_number]).replace_extension("").string();
 		std::string iter = "_" + std::to_string(n_iter) + "_" + std::to_string(i);
