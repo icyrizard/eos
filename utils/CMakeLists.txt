@@ -39,7 +39,7 @@ add_executable(accuracy-evaluation accuracy-evaluation.cpp)
 target_link_libraries(accuracy-evaluation eos ${OpenCV_LIBS} ${Boost_LIBRARIES})
 target_link_libraries(accuracy-evaluation "$<$<CXX_COMPILER_ID:GNU>:-pthread>$<$<CXX_COMPILER_ID:Clang>:-pthreads>")
 
-# install target:
+# Install targets:
 install(TARGETS scm-to-cereal DESTINATION bin)
 install(TARGETS bfm-binary-to-cereal DESTINATION bin)
 install(TARGETS edgestruct-csv-to-json DESTINATION bin)

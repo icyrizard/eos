@@ -178,9 +178,9 @@ inline std::vector<float> fit_blendshapes_to_landmarks_nnls(const std::vector<eo
 	// Solve using NNLS:
 	VectorXf coefficients;
 
-	Eigen::NNLS<MatrixXf> nnls(A, 100); //it normaly converges within <10 iterations
-	bool non_singular = nnls.solve(-b);
-	coefficients.noalias() = nnls.x();
+    Eigen::NNLS<MatrixXf> nnls(A, 100); //it normaly converges within <10 iterations
+    bool non_singular = nnls.solve(-b);
+    coefficients.noalias() = nnls.x();
 
 	return std::vector<float>(coefficients.data(), coefficients.data() + coefficients.size());
 };
