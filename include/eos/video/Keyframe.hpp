@@ -28,6 +28,8 @@
 #include "eos/morphablemodel/MorphableModel.hpp"
 #include "eos/render/texture_extraction.hpp"
 
+#include <boost/property_tree/ptree.hpp>
+
 #include "opencv2/core/core.hpp"
 
 #include <deque>
@@ -40,7 +42,7 @@ namespace video {
  *
  * Contains the original frame, all necessary fitting parameters, and a score.
  */
-struct Keyframe {
+class Keyframe {
 public:
 	Keyframe() {}
 	/**
@@ -76,10 +78,11 @@ public:
 		this->fitting_result = fitting_result;
 	}
 
+	int frame_number;
 	float score = 0.0f;
+
 	cv::Mat frame;
 	fitting::FittingResult fitting_result;
-	int frame_number;
 };
 
 /**
@@ -318,8 +321,7 @@ public:
 	BufferedVideoIterator() {};
 
 	// TODO: build support for setting the amount of max_frames in the buffer.
-	BufferedVideoIterator(std::string videoFilePath,
-						  uint max_frames = 5, uint min_frames = 4) {
+	BufferedVideoIterator(std::string videoFilePath, boost::property_tree::ptree settings) {
 		std::ifstream file(videoFilePath);
 
 		std::cout << "video file path: " << videoFilePath << std::endl;
@@ -334,8 +336,13 @@ public:
 		}
 
 		this->cap = tmp_cap;
-		this->max_frames = max_frames;
-		this->min_frames = min_frames;
+		this->max_frames = settings.get<int>("video.max_frames", 5);
+		this->min_frames = settings.get<int>("video.min_frames", 5);
+		this->drop_frames = settings.get<int>("video.drop_frames", 0);
+		this->laplacian_threshold = settings.get<int>("video.blur_threshold", 1000);
+
+		// TODO: Implement this.
+		this->skip_frames = settings.get<int>("video.skip_frames", 0);
 	}
 
 	/**
@@ -352,6 +359,7 @@ public:
 		cv::Mat frame;
 		cap >> frame;
 
+
 		// Pop if we exceeded max_frames.
 		if (n_frames > max_frames) {
 			frame_buffer.pop_front();
@@ -362,12 +370,19 @@ public:
 
 		if (frame_laplacian_score < laplacian_threshold && frame_laplacian_score > 0) {
 			frame_buffer.push_back(Keyframe(frame_laplacian_score, frame, total_frames_processed));
-			total_frames_processed++;
 			n_frames++;
 			std::cout << total_frames_processed << ": laplacian score " << frame_laplacian_score << std::endl;
 		} else {
-			std::cout << "skipping frame, too blurry or total black" << std::endl;
+			std::cout << total_frames_processed << ": skipping frame " << std::endl;
+			if (frame_laplacian_score == 0) {
+				std::cout << "total black" << std::endl;
+			} else {
+				std::cout << "too blurry" << std::endl;
+			}
+
 		}
+
+		total_frames_processed++;
 
 		// fill up the buffer until we hit the minimum frames we want in the buffer.
 		if(n_frames < min_frames) {
@@ -386,21 +401,23 @@ private:
 	std::deque<Keyframe> frame_buffer;
 
 	// TODO: make set-able
-	uint total_frames_processed = 0;
-
-	uint skip_frames = 0;
+	// total frames in processed, not persee in buffer (skipped frames)
+	int total_frames_processed = 0;
 
 	// total frames in buffer
-	uint n_frames = 0;
+	int n_frames = 0;
 
-	// min frames to load at the start.
-	uint min_frames = 5;
+	// number of frames to skip at before starting
+	int skip_frames = 0;
+
+	// minimum amount of frames to keep in buffer.
+	int min_frames = 5;
 
 	// keep max_frames into the buffer.
-	uint max_frames = 5;
+	int max_frames = 5;
 
 	// Note: these settings are for future use
-	uint drop_frames = 0;
+	int drop_frames = 0;
 
 	// laplacian threshold
 	double laplacian_threshold = 10000000;

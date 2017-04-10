@@ -31,6 +31,8 @@
 
 #include "boost/program_options.hpp"
 #include "boost/filesystem.hpp"
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/ini_parser.hpp>
 #include "glm/gtx/string_cast.hpp"
 
 #include <vector>
@@ -185,17 +187,17 @@ void evaluate_results(
 		// and similarly for pitch and roll.
 		// Extract the texture from the image using given mesh and camera parameters:
 		Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(
-			rendering_paramss[i], frame_width, frame_height
+				rendering_paramss[i], frame_width, frame_height
 		);
 
 		// Draw the loaded landmarks:
 		Mat isomap = render::extract_texture(meshs[i], affine_from_ortho, frame);
 		Mat outimg = frame.clone();
 
-		for (auto&& lm : landmark_list[frame_number]) {
+		for (auto &&lm : landmark_list[i]) {
 			cv::rectangle(
 					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), { 255, 0, 0 }
+					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
 			);
 		}
 
@@ -208,7 +210,8 @@ void evaluate_results(
 				fitting::get_opencv_viewport(frame_width, frame_height)
 		);
 
-		std::string outputfile = fs::path(annotations[frame_number]).replace_extension("").string();
+		fs::path path = (fs::path(annotations[frame_number]).parent_path() / "eval");
+		std::string outputfile = (path / fs::path(annotations[frame_number]).replace_extension("").filename()).string();
 		std::string iter = "_" + std::to_string(n_iter) + "_" + std::to_string(i);
 		cv::imwrite(outputfile + iter + ".annotated.png", outimg);
 
@@ -234,16 +237,17 @@ void evaluate_results(
 		merged_isomap = isomap_averaging.add_and_merge(isomap);
 
 		evaluate_accuracy(
-				landmark_list[frame_number],
-				landmark_mapper,
-				meshs[i],
-				affine_from_ortho
+			landmark_list[i],
+			landmark_mapper,
+			meshs[i],
+			affine_from_ortho
 		);
 	}
 
 	// save the merged isomap:
 	std::string iter = "_" + std::to_string(n_iter);
-	std::string outputfile = fs::path(annotations[n_iter]).replace_extension("").string();
+	fs::path path = (fs::path(annotations[n_iter]).parent_path() / "eval");
+	std::string outputfile = (path / fs::path(annotations[n_iter]).replace_extension("").filename()).string();
 
 	cv::imwrite(outputfile + iter + ".isomap.png", merged_isomap);
 
@@ -265,6 +269,44 @@ void evaluate_results(
 }
 
 /**
+ * Parse config file
+ * @param filename
+ */
+boost::property_tree::ptree get_reconstruction_config(std::string filename) {
+	boost::property_tree::ptree pt;
+	boost::property_tree::ini_parser::read_ini(filename, pt);
+
+	std::cout << pt.get<std::string>("video.max_frames") << std::endl;
+	std::cout << pt.get<std::string>("video.drop_frames") << std::endl;
+	std::cout << pt.get<std::string>("video.min_frames") << std::endl;
+	std::cout << pt.get<std::string>("video.skip_frames") << std::endl;
+	std::cout << pt.get<std::string>("video.blur_threshold") << std::endl;
+
+	return pt;
+}
+
+/**
+ *
+ * Return a list of landmarks based on the keyframe's frame_number. Such that the frame and the landmarks
+ * are aligned. The VideoIterator is able to skip frames based on certain conditions, skipping frames
+ * causes un-alignment of the total landmarks list and the list of frames. This samples the correct landmark
+ * annotations with the based on a given keyframe list.
+ *
+ * @param key_frames
+ * @param landmarks
+ * @return
+ */
+vector<core::LandmarkCollection<cv::Vec2f>> sample_landmarks(std::deque<eos::video::Keyframe> key_frames, vector<core::LandmarkCollection<cv::Vec2f>> landmarks) {
+		vector<core::LandmarkCollection<cv::Vec2f>> sublist;
+
+	for (auto& f : key_frames) {
+		sublist.push_back(landmarks[f.frame_number]);
+	}
+
+	return sublist;
+}
+
+/**
  * This app demonstrates estimation of the camera and fitting of the shape
  * model of a 3D Morphable Model from an ibug LFPW image with its landmarks.
  * In addition to fit-model-simple, this example uses blendshapes, contour-
@@ -274,7 +316,7 @@ void evaluate_results(
  * to vertex indices using the LandmarkMapper.
  */
 int main(int argc, char *argv[]) {
-	fs::path modelfile, isomapfile, videofile, landmarksfile, mappingsfile, contourfile, edgetopologyfile, blendshapesfile, outputfile;
+	fs::path modelfile, isomapfile, videofile, landmarksfile, mappingsfile, contourfile, edgetopologyfile, blendshapesfile, outputfile, reconstruction_config;
 	std::vector<std::string> annotations;
 
 	// get annotaitions from one file
@@ -287,10 +329,12 @@ int main(int argc, char *argv[]) {
 				 "display the help message")
 				("model,m", po::value<fs::path>(&modelfile)->required()->default_value("../share/sfm_shape_3448.bin"),
 				 "a Morphable Model stored as cereal BinaryArchive")
-				("video,i", po::value<fs::path>(&videofile)->required(),
+				("video,v", po::value<fs::path>(&videofile)->required(),
 				 "an input image")
+				("config,c", po::value<fs::path>(&reconstruction_config)->default_value("../share/default_reconstruction_config.ini"),
+				 "configuration file for the reconstruction")
 				("get_annotations,g", po::bool_switch(&get_annotations)->default_value(false),
-				 "read .pts annotation file locations from one file, one file path per line")
+				 "read .pts annotation file locations from one file, put one file path on each line")
 				("annotations,l", po::value<vector<std::string>>(&annotations)->multitoken(),
 					 ".pts annotation files per frame of video")
 				("mapping,p", po::value<fs::path>(&mappingsfile)->required()->default_value("../share/ibug2did.txt"),
@@ -323,6 +367,7 @@ int main(int argc, char *argv[]) {
 
 	// start loading prerequisites
 	morphablemodel::MorphableModel morphable_model;
+
 	try {
 		morphable_model = morphablemodel::load_model(modelfile.string());
 	} catch (const std::runtime_error &e) {
@@ -359,9 +404,10 @@ int main(int argc, char *argv[]) {
 	vector<fitting::RenderingParameters> rendering_paramss;
 
 	BufferedVideoIterator vid_iterator;
+	boost::property_tree::ptree settings = get_reconstruction_config(reconstruction_config.string());
 
 	try {
-		vid_iterator = BufferedVideoIterator(videofile.string(), 5, 5);
+		vid_iterator = BufferedVideoIterator(videofile.string(), settings);
 	} catch(std::runtime_error &e) {
 		std::cout << e.what() << std::endl;
 		return EXIT_FAILURE;
@@ -378,17 +424,16 @@ int main(int argc, char *argv[]) {
 	std::vector<std::vector<float>> blend_shape_coefficients;
 	std::vector<std::vector<cv::Vec2f>> fitted_image_points;
 
-
 	int n_iter = 0;
-
 
 	while(!(key_frames.empty())) {
 		if (n_iter == 10) {
 			break;
 		}
 
-		// load all annotation files into lists of landmarks
-		vector<core::LandmarkCollection<cv::Vec2f>> landmark_sublist(landmark_list.begin() + n_iter, landmark_list.end());
+		vector<core::LandmarkCollection<cv::Vec2f>> landmark_sublist = sample_landmarks(
+			key_frames, landmark_list
+		);
 
 		std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi(
 				morphable_model,
@@ -413,7 +458,7 @@ int main(int argc, char *argv[]) {
 		evaluate_results(
 				key_frames,
 				rendering_paramss,
-				landmark_list,
+				landmark_sublist,
 				morphable_model,
 				meshs,
 				pca_shape_coefficients,
