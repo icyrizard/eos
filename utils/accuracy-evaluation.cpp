@@ -128,13 +128,13 @@ void evaluate_accuracy(
 		// The vertex_idx should be around the value of the original coordinates after we have
 		// projected it with the affine_from_ortho that is obtained earlier.
 		Mat vertex_screen_coords = affine_from_ortho *
-								   Mat(cv::Vec4f(
-										   mesh.vertices[vertex_idx].x,
-										   mesh.vertices[vertex_idx].y,
-										   mesh.vertices[vertex_idx].z,
-										   mesh.vertices[vertex_idx].w
-									   )
-								   );
+				Mat(cv::Vec4f(
+						mesh.vertices[vertex_idx].x,
+						mesh.vertices[vertex_idx].y,
+						mesh.vertices[vertex_idx].z,
+						mesh.vertices[vertex_idx].w
+					)
+				);
 
 		// using euclidean distance here, but should look at other ways too.
 		float dist = euclidean_distance(landmarks[i].coordinates, vertex_screen_coords);
@@ -381,14 +381,13 @@ int main(int argc, char *argv[]) {
 
 	int n_iter = 0;
 
-	// load all annotation files into lists of landmarks
-	vector<core::LandmarkCollection<cv::Vec2f>> landmark_sublist;
 
 	while(!(key_frames.empty())) {
 		if (n_iter == 10) {
 			break;
 		}
 
+		// load all annotation files into lists of landmarks
 		vector<core::LandmarkCollection<cv::Vec2f>> landmark_sublist(landmark_list.begin() + n_iter, landmark_list.end());
 
 		std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi(
