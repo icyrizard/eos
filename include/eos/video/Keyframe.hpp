@@ -318,7 +318,8 @@ public:
 	BufferedVideoIterator() {};
 
 	// TODO: build support for setting the amount of max_frames in the buffer.
-	BufferedVideoIterator(std::string videoFilePath, int max_frames = 5, int min_frames = 4) {
+	BufferedVideoIterator(std::string videoFilePath,
+						  uint max_frames = 5, uint min_frames = 4) {
 		std::ifstream file(videoFilePath);
 
 		std::cout << "video file path: " << videoFilePath << std::endl;
@@ -351,27 +352,25 @@ public:
 		cv::Mat frame;
 		cap >> frame;
 
-		if (frame.empty()) {
-			frame_buffer = next();
-			return frame_buffer;
-		}
-
 		// Pop if we exceeded max_frames.
 		if (n_frames > max_frames) {
 			frame_buffer.pop_front();
 			n_frames--;
 		}
 
-		float lap_score = static_cast<float>(variance_of_laplacian(frame));
+		float frame_laplacian_score = static_cast<float>(variance_of_laplacian(frame));
 
-		if (lap_score < laplacian_threshold) {
+		if (frame_laplacian_score < laplacian_threshold && frame_laplacian_score > 0) {
+			frame_buffer.push_back(Keyframe(frame_laplacian_score, frame, total_frames_processed));
 			total_frames_processed++;
-			frame_buffer.push_back(Keyframe(lap_score, frame, total_frames_processed));
+			n_frames++;
+			std::cout << total_frames_processed << ": laplacian score " << frame_laplacian_score << std::endl;
+		} else {
+			std::cout << "skipping frame, too blurry or total black" << std::endl;
 		}
 
-		n_frames++;
-
-		if(frame_buffer_length + 1 < min_frames) {
+		// fill up the buffer until we hit the minimum frames we want in the buffer.
+		if(n_frames < min_frames) {
 			frame_buffer = next();
 		}
 
@@ -387,18 +386,21 @@ private:
 	std::deque<Keyframe> frame_buffer;
 
 	// TODO: make set-able
-	long total_frames_processed = 1;
+	uint total_frames_processed = 0;
+
+	uint skip_frames = 0;
+
 	// total frames in buffer
-	long n_frames = 1;
+	uint n_frames = 0;
 
 	// min frames to load at the start.
-	long min_frames = 3;
+	uint min_frames = 5;
 
 	// keep max_frames into the buffer.
-	long max_frames = 5;
+	uint max_frames = 5;
 
 	// Note: these settings are for future use
-	int drop_frames = 0;
+	uint drop_frames = 0;
 
 	// laplacian threshold
 	double laplacian_threshold = 10000000;

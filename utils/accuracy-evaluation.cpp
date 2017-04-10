@@ -81,6 +81,80 @@ void draw_wireframe(cv::Mat image, const eos::core::Mesh& mesh, glm::mat4x4 mode
 	}
 };
 
+/**
+ * Helper function to calculate the euclidean distance between the landmark and a projected
+ * point. Nothing more than Pythagoras.
+ *
+ * @param landmark
+ * @param vertex_screen_coords
+ * @return
+ */
+inline float euclidean_distance(cv::Vec2f landmark, cv::Mat vertex_screen_coords) {
+	float screen_x = vertex_screen_coords.at<float>(0, 0);
+	float screen_y = vertex_screen_coords.at<float>(1, 0);
+
+	// Calc squared differences, ready for use in Pythagoras.
+	float landmark_diff_x_sq = std::fabs(landmark[0] - screen_x) * std::fabs(landmark[0] - screen_x);
+	float landmark_diff_y_sq = std::fabs(landmark[1] - screen_y) * std::fabs(landmark[0] - screen_x);
+
+	return std::sqrt(landmark_diff_x_sq + landmark_diff_y_sq);
+}
+
+/**
+ *
+ * @param landmarks
+ * @param landmark_mapper
+ * @param mesh
+ * @param affine_from_ortho
+ */
+void evaluate_accuracy(
+		core::LandmarkCollection<cv::Vec2f> landmarks,
+		core::LandmarkMapper landmark_mapper,
+		const eos::core::Mesh& mesh,
+		Mat affine_from_ortho) {
+	vector<float> total_error;
+
+	// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
+	for (uint i = 0; i < landmarks.size(); ++i) {
+		auto converted_name = landmark_mapper.convert(landmarks[i].name);
+
+		// no mapping defined for the current landmark
+		if (!converted_name) {
+			continue;
+		}
+
+		int vertex_idx = std::stoi(converted_name.get());
+
+		// The vertex_idx should be around the value of the original coordinates after we have
+		// projected it with the affine_from_ortho that is obtained earlier.
+		Mat vertex_screen_coords = affine_from_ortho *
+								   Mat(cv::Vec4f(
+										   mesh.vertices[vertex_idx].x,
+										   mesh.vertices[vertex_idx].y,
+										   mesh.vertices[vertex_idx].z,
+										   mesh.vertices[vertex_idx].w
+									   )
+								   );
+
+		// using euclidean distance here, but should look at other ways too.
+		float dist = euclidean_distance(landmarks[i].coordinates, vertex_screen_coords);
+		total_error.push_back(dist);
+	}
+
+	// Calculate mean error and stddev.
+	float accum = 0.0;
+	float mean_error = std::accumulate(total_error.begin(), total_error.end(), 0) / landmarks.size();
+
+	// cacl. standard deviation
+	std::for_each (std::begin(total_error), std::end(total_error), [&](const float d) {
+		accum += (d - mean_error) * (d - mean_error);
+	});
+
+	float stddev = std::sqrt(accum / (total_error.size() - 1));
+
+	std::cout << "stddev/mean_error: " << stddev << " " <<  mean_error << std::endl;
+}
+
 void evaluate_results(
 		std::deque<eos::video::Keyframe> key_frames,
 		std::vector<fitting::RenderingParameters> rendering_paramss,
@@ -90,11 +164,13 @@ void evaluate_results(
 		std::vector<float> pca_shape_coefficients,
 		std::vector<std::vector<float>> blend_shape_coefficients,
 		std::vector<std::vector<cv::Vec2f>> fitted_image_points,
-		std::vector<std::string> annotations, int n_iter) {
+		std::vector<std::string> annotations,
+		core::LandmarkMapper landmark_mapper,
+		int n_iter) {
 
 	WeightedIsomapAveraging isomap_averaging(60.f); // merge all triangles that are facing <60° towards the camera
-	Mat merged_isomap;
 
+	Mat merged_isomap;
 	fs::path outputfilebase = annotations[0];
 
 	// The 3D head pose can be recovered as follows:
@@ -116,11 +192,10 @@ void evaluate_results(
 		Mat isomap = render::extract_texture(meshs[i], affine_from_ortho, frame);
 		Mat outimg = frame.clone();
 
-		std::cout << "processing:" << frame_number << std::endl;
 		for (auto&& lm : landmark_list[frame_number]) {
 			cv::rectangle(
 					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-							cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), { 255, 0, 0 }
+					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), { 255, 0, 0 }
 			);
 		}
 
@@ -131,11 +206,11 @@ void evaluate_results(
 				rendering_paramss[i].get_modelview(),
 				rendering_paramss[i].get_projection(),
 				fitting::get_opencv_viewport(frame_width, frame_height)
-		);
+		)
 
-		fs::path outputfile = annotations[i];
-		outputfile.replace_extension(".annotated.png");
-		cv::imwrite(outputfile.string(), outimg);
+		std::string outputfile = fs::path(annotations[frame_number]).replace_extension("").string();
+		std::string iter = "_" + std::to_string(n_iter) + "_" + std::to_string(i);
+		cv::imwrite(outputfile + iter + ".annotated.png", outimg);
 
 		// save frontal rendering with texture:
 		Mat frontal_rendering;
@@ -149,29 +224,28 @@ void evaluate_results(
 		);
 
 		std::tie(frontal_rendering, std::ignore) = eos::render::render(neutral_expression, modelview_frontal, glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f), 256, 256, render::create_mipmapped_texture(isomap), true, false, false);
-		cv::imshow("frame", isomap);
-		outputfile.replace_extension(".frontal.png");
-		cv::imwrite(outputfile.string(), frontal_rendering);
-		outputfile.replace_extension("");
+
+		cv::imwrite(outputfile + iter + ".frontal.png", frontal_rendering);
 
 		// And save the isomap:
-		if (!isomap.empty()) {
-			// And save the isomap:
-			outputfile.replace_extension(".isomap.png");
-			cv::imwrite(outputfile.string(), isomap);
+		cv::imwrite(outputfile + iter + ".isomap.png", isomap);
 
-			// merge the isomaps:
-			merged_isomap = isomap_averaging.add_and_merge(isomap);
-			cv::imwrite(outputfile.string(), isomap);
+		// merge the isomaps:
+		merged_isomap = isomap_averaging.add_and_merge(isomap);
 
-		}
+		evaluate_accuracy(
+				landmark_list[frame_number],
+				landmark_mapper,
+				meshs[i],
+				affine_from_ortho
+		);
 	}
 
 	// save the merged isomap:
-	fs::path outputfile = outputfilebase;
-	outputfile += fs::path("merged.isomap.png");
-	cv::imwrite(outputfile.string(), merged_isomap);
-	outputfile.replace_extension("");
+	std::string iter = "_" + std::to_string(n_iter);
+	std::string outputfile = fs::path(annotations[n_iter]).replace_extension("").string();
+
+	cv::imwrite(outputfile + iter + ".isomap.png", merged_isomap);
 
 	// save the frontal rendering with merged isomap:
 	Mat frontal_rendering;
@@ -181,17 +255,13 @@ void evaluate_results(
 			morphable_model.get_color_model().get_mean(),
 			morphable_model.get_shape_model().get_triangle_list(), morphable_model.get_color_model().get_triangle_list(), morphable_model.get_texture_coordinates());
 	std::tie(frontal_rendering, std::ignore) = render::render(neutral_expression, modelview_frontal, glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f), 512, 512, render::create_mipmapped_texture(merged_isomap), true, false, false);
-	outputfile.replace_extension(".frontal.png");
-	cv::imwrite(outputfile.string(), frontal_rendering);
-	outputfile.replace_extension("");
+	cv::imwrite(outputfile + iter + ".merged_frontal.png", frontal_rendering);
 
 	// Save the mesh as textured obj:
-	std::string obj_filename = "_" + std::to_string(n_iter) + ".obj";
-	outputfile.replace_extension(obj_filename.c_str());
 	core::write_textured_obj(morphable_model.draw_sample(
-			pca_shape_coefficients, std::vector<float>()), outputfile.string());
+			pca_shape_coefficients, std::vector<float>()), outputfile + iter + ".obj");
 
-	std::cout << "Finished fitting and wrote result mesh and isomap to files with basename " << outputfilebase << "." << std::endl;
+	std::cout << "Finished fitting and wrote result mesh and isomap to files with basename " << outputfile + iter + ".obj" << std::endl;
 }
 
 /**
@@ -221,7 +291,7 @@ int main(int argc, char *argv[]) {
 				 "an input image")
 				("get_annotations,g", po::bool_switch(&get_annotations)->default_value(false),
 				 "read .pts annotation file locations from one file, one file path per line")
-				("annotations,l", po::value<vector<std::string>>(&annotations)->multitoken()->default_value("../bin/data/vid_annot_pts_files.txt"),
+				("annotations,l", po::value<vector<std::string>>(&annotations)->multitoken(),
 					 ".pts annotation files per frame of video")
 				("mapping,p", po::value<fs::path>(&mappingsfile)->required()->default_value("../share/ibug2did.txt"),
 					"2D landmarks for the image, in ibug .pts format")
@@ -291,7 +361,7 @@ int main(int argc, char *argv[]) {
 	BufferedVideoIterator vid_iterator;
 
 	try {
-		vid_iterator = BufferedVideoIterator(videofile.string());
+		vid_iterator = BufferedVideoIterator(videofile.string(), 5, 5);
 	} catch(std::runtime_error &e) {
 		std::cout << e.what() << std::endl;
 		return EXIT_FAILURE;
@@ -308,17 +378,23 @@ int main(int argc, char *argv[]) {
 	std::vector<std::vector<float>> blend_shape_coefficients;
 	std::vector<std::vector<cv::Vec2f>> fitted_image_points;
 
+
 	int n_iter = 0;
+
+	// load all annotation files into lists of landmarks
+	vector<core::LandmarkCollection<cv::Vec2f>> landmark_sublist;
 
 	while(!(key_frames.empty())) {
 		if (n_iter == 10) {
 			break;
 		}
 
+		vector<core::LandmarkCollection<cv::Vec2f>> landmark_sublist(landmark_list.begin() + n_iter, landmark_list.end());
+
 		std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi(
 				morphable_model,
 				blend_shapes,
-				landmark_list,
+				landmark_sublist,
 				landmark_mapper,
 				key_frames[0].frame.cols,
 				key_frames[0].frame.rows,
@@ -345,6 +421,7 @@ int main(int argc, char *argv[]) {
 				blend_shape_coefficients,
 				fitted_image_points,
 				annotations,
+				landmark_mapper,
 				n_iter
 		);
 
