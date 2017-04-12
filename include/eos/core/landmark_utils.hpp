@@ -153,9 +153,10 @@ namespace eos {
 		*/
 		template<typename vec2f>
 		std::pair <std::vector<core::LandmarkCollection<vec2f>>, std::vector<std::string>>
-		load_annotations(
-				std::vector<std::string>annotations,
-				core::LandmarkMapper mapper, morphablemodel::MorphableModel morphable_model, bool read_from_file = false) {
+		load_annotations(std::vector<std::string>annotations,
+						 core::LandmarkMapper mapper,
+						 morphablemodel::MorphableModel morphable_model,
+						 bool read_from_file = false) {
 			std::vector<core::LandmarkCollection<vec2f>> landmark_collection_list;
 
 			// load file names from one file.
@@ -180,12 +181,112 @@ namespace eos {
 				// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM):
 				for (int i = 0; i < landmarks.size(); ++i) {
 					image_points.emplace_back(landmarks[i]);
-				}
+				  }
 
 				landmark_collection_list.push_back(image_points);
 			}
 
 			return std::make_pair(landmark_collection_list, annotations);
+		}
+
+		/**
+		 *
+		 * @tparam vec2f
+		 * @tparam vec4f
+		 * @param landmarks
+		 * @param landmark_mapper
+		 * @param mesh
+		 * @param model_points
+		 * @param vertex_indices
+		 * @param image_points
+		 */
+		template <typename vec2f, typename vec4f>
+		inline void subselect_landmarks(core::LandmarkCollection<vec2f> landmarks,
+										const core::LandmarkMapper& landmark_mapper,
+										eos::core::Mesh& mesh,
+										vector<vector<vec4f>>& model_points,
+										vector<vector<int>>& vertex_indices,
+										vector<vector<vec2f>>& image_points) {
+			vector<Vec4f> current_model_points;
+			vector<int> current_vertex_indices;
+			vector<Vec2f> current_image_points;
+
+			for (auto &lm: landmarks) {
+				auto converted_name = landmark_mapper.convert(lm.name);
+				if (!converted_name) { // no mapping defined for the current landmark
+					continue;
+				}
+
+				int vertex_idx = std::stoi(converted_name.get());
+				Vec4f vertex(
+					mesh.vertices[vertex_idx].x,
+					mesh.vertices[vertex_idx].y,
+					mesh.vertices[vertex_idx].z,
+					mesh.vertices[vertex_idx].w
+				);
+
+				current_model_points.emplace_back(vertex);
+				current_vertex_indices.emplace_back(vertex_idx);
+				current_image_points.emplace_back(lm.coordinates);
+			}
+
+			model_points.push_back(current_model_points);
+			vertex_indices.push_back(current_vertex_indices);
+			image_points.push_back(current_image_points);
+		}
+
+		/**
+		 * As the name suggests, in the multi-frame fitting we can subselect landmarks according to the
+		 * landmark mapper.
+		 *
+		 * @tparam vec2f
+		 * @param[in] landmarks
+		 * @param[in] landmark_mapper
+		 * @param[in] meshs
+		 * @param[out] model_points
+		 * @param[out] vertex_indices
+		 * @param[out] image_points
+		 */
+		template <typename vec2f, typename vec4f>
+		inline void subselect_landmarks_multi(const std::vector<core::LandmarkCollection<vec2f>>& landmarks,
+											  const core::LandmarkMapper& landmark_mapper,
+											  vector<eos::core::Mesh> meshs,
+											  vector<vector<vec4f>>& model_points,
+											  vector<vector<int>>& vertex_indices,
+											  vector<vector<vec2f>>& image_points) {
+
+			vector<Vec4f> current_model_points;
+			vector<int> current_vertex_indices;
+			vector<Vec2f> current_image_points;
+
+			// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM),
+			// and get the corresponding model points (mean if given no initial coeffs, from the computed shape otherwise):
+			for (int i = 0; i < landmarks.size(); i++) {
+				auto landmark_list = landmarks[i];
+				auto mesh = meshs[i];
+
+				for (auto &lm: landmark_list) {
+					auto converted_name = landmark_mapper.convert(lm.name);
+					if (!converted_name) { // no mapping defined for the current landmark
+						continue;
+					}
+					int vertex_idx = std::stoi(converted_name.get());
+					Vec4f vertex(
+						mesh.vertices[vertex_idx].x,
+						mesh.vertices[vertex_idx].y,
+						mesh.vertices[vertex_idx].z,
+						mesh.vertices[vertex_idx].w
+					);
+
+					current_model_points.emplace_back(vertex);
+					current_vertex_indices.emplace_back(vertex_idx);
+					current_image_points.emplace_back(lm.coordinates);
+				}
+
+				model_points.push_back(current_model_points);
+				vertex_indices.push_back(current_vertex_indices);
+				image_points.push_back(current_image_points);
+			}
 		}
 	}
 }

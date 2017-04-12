@@ -23,7 +23,7 @@ option(EOS_BUILD_EXAMPLES "Build the example applications." ON)
 message(STATUS "EOS_BUILD_EXAMPLES: ${EOS_BUILD_EXAMPLES}")
 option(EOS_BUILD_CERES_EXAMPLE "Build the fit-model-ceres example (requires Ceres)." OFF)
 message(STATUS "EOS_BUILD_CERES_EXAMPLE: ${EOS_BUILD_CERES_EXAMPLE}")
-option(EOS_BUILD_UTILS "Build utility applications." OFF)
+option(EOS_BUILD_UTILS "Build utility applications." ON)
 message(STATUS "EOS_BUILD_UTILS: ${EOS_BUILD_UTILS}")
 option(EOS_BUILD_DOCUMENTATION "Build the library documentation." OFF)
 message(STATUS "EOS_BUILD_DOCUMENTATION: ${EOS_BUILD_DOCUMENTATION}")
@@ -97,6 +97,7 @@ set(HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/fitting/fitting.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/fitting/ceres_nonlinear.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/fitting/RenderingParameters.hpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/fitting/ReconstructionData.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/render/utils.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/render/render.hpp
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/render/render_affine.hpp
@@ -155,9 +156,7 @@ if(EOS_BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
 
-if(EOS_BUILD_UTILS)
-  add_subdirectory(utils)
-endif()
+add_subdirectory(utils)
 
 if(EOS_BUILD_DOCUMENTATION)
   add_subdirectory(doc)

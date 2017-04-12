@@ -59,8 +59,16 @@ namespace eos {
  * @param[in] model_standard_deviation The standard deviation of the 3D vertex points in the 3D model, projected to 2D (so the value is in pixels).
  * @return The estimated shape-coefficients (alphas).
  */
-inline std::vector<float> fit_shape_to_landmarks_linear_multi(const morphablemodel::MorphableModel& morphable_model, std::vector<cv::Mat> affine_camera_matrix, std::vector<std::vector<cv::Vec2f>>& landmarks, std::vector<std::vector<int>>& vertex_ids, std::vector<Eigen::VectorXf> base_face=std::vector<Eigen::VectorXf>(), float lambda=3.0f, boost::optional<int> num_coefficients_to_fit=boost::optional<int>(), boost::optional<float> detector_standard_deviation=boost::optional<float>(), boost::optional<float> model_standard_deviation=boost::optional<float>())
-{
+inline std::vector<float> fit_shape_to_landmarks_linear_multi(
+		const morphablemodel::MorphableModel& morphable_model,
+		std::vector<cv::Mat> affine_camera_matrix,
+		std::vector<std::vector<cv::Vec2f>>& landmarks,
+		std::vector<std::vector<int>>& vertex_ids,
+		std::vector<Eigen::VectorXf> base_face=std::vector<Eigen::VectorXf>(),
+		float lambda=3.0f,
+		boost::optional<int> num_coefficients_to_fit=boost::optional<int>(),
+		boost::optional<float> detector_standard_deviation=boost::optional<float>(),
+		boost::optional<float> model_standard_deviation=boost::optional<float>()) {
 
 	assert(affine_camera_matrix.size() == landmarks.size() && landmarks.size() == vertex_ids.size()); // same number of instances (i.e. images/frames) for each of them
 	assert(landmarks.size() == vertex_ids.size());
@@ -100,7 +108,7 @@ inline std::vector<float> fit_shape_to_landmarks_linear_multi(const morphablemod
 	int y_index = 0; // also runs the same as P_index. Should rename to "running_index"?
 	// The mean, with an added homogeneous coordinate (x_1, y_1, z_1, 1, x_2, ...)^t
 	VectorXf v_bar = VectorXf::Ones(4 * total_num_landmarks_dimension);
-	int v_bar_index = 0; // also runs the same as P_index. But be careful, if I change it to be only 1 variable, only increment it once! :-)
+	int v_bar_index = 0; // also runs the same as P_index. But be careful, if I change it to be only 1 variable, only increment it once! :-),
 						 // Well I think that would make it a bit messy since we need to increment inside the for (landmarks...) loop. Try to refactor some other way.
 
     for (int k = 0; k < num_images; ++k)

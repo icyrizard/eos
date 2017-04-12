@@ -78,10 +78,10 @@ public:
 		this->fitting_result = fitting_result;
 	}
 
+	cv::Mat frame;
 	int frame_number;
 	float score = 0.0f;
 
-	cv::Mat frame;
 	fitting::FittingResult fitting_result;
 };
 
@@ -323,7 +323,6 @@ public:
 	// TODO: build support for setting the amount of max_frames in the buffer.
 	BufferedVideoIterator(std::string videoFilePath, boost::property_tree::ptree settings) {
 		std::ifstream file(videoFilePath);
-
 		std::cout << "video file path: " << videoFilePath << std::endl;
 		if (!file.is_open()) {
 			throw std::runtime_error("Error opening given file: " + videoFilePath);
@@ -359,7 +358,6 @@ public:
 		cv::Mat frame;
 		cap >> frame;
 
-
 		// Pop if we exceeded max_frames.
 		if (n_frames > max_frames) {
 			frame_buffer.pop_front();
@@ -373,11 +371,11 @@ public:
 			n_frames++;
 			std::cout << total_frames_processed << ": laplacian score " << frame_laplacian_score << std::endl;
 		} else {
-			std::cout << total_frames_processed << ": skipping frame " << std::endl;
+			std::cout << total_frames_processed << ": skipping frame(";
 			if (frame_laplacian_score == 0) {
-				std::cout << "total black" << std::endl;
+				std::cout << "total black): " << frame_laplacian_score << std::endl;
 			} else {
-				std::cout << "too blurry" << std::endl;
+				std::cout << "too blurry): " << frame_laplacian_score << std::endl;
 			}
 
 		}
@@ -495,7 +493,39 @@ private:
 	unsigned char threshold;
 };
 
-} /* namespace video */
+/**
+* @brief Merges PCA coefficients from a live video with a simple averaging.
+*/
+class PcaCoefficientMerging
+{
+public:
+/**
+ * @brief Merges the given new PCA coefficients with all previously processed coefficients.
+ *
+ * @param[in] coefficients The new coefficients to add.
+ * @return The merged coefficients of all images processed so far.
+ */
+std::vector<float> add_and_merge(const std::vector<float>& coefficients)
+{
+	if (merged_shape_coefficients.empty()) {
+		merged_shape_coefficients = cv::Mat::zeros(coefficients.size(), 1, CV_32FC1);
+	}
+
+	assert(coefficients.size() == merged_shape_coefficients.rows);
+
+	cv::Mat test(coefficients);
+	merged_shape_coefficients = (merged_shape_coefficients * num_processed_frames + test) / (num_processed_frames + 1.0f);
+	++num_processed_frames;
+	return std::vector<float>(merged_shape_coefficients.begin<float>(), merged_shape_coefficients.end<float>());
+};
+
+private:
+	int num_processed_frames = 0;
+	cv::Mat merged_shape_coefficients;
+};
+
+
+	} /* namespace video */
 } /* namespace eos */
 
 #endif /* KEYFRAME_HPP_ */

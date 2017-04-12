@@ -124,8 +124,17 @@ namespace eos {
  * @param[in] enable_far_clipping Whether vertices should be clipped against the far plane.
  * @return A pair with the colourbuffer as its first element and the depthbuffer as the second element.
  */
-inline std::pair<cv::Mat, cv::Mat> render(core::Mesh mesh, glm::tmat4x4<float> model_view_matrix, glm::tmat4x4<float> projection_matrix, int viewport_width, int viewport_height, const boost::optional<Texture>& texture = boost::none, bool enable_backface_culling = false, bool enable_near_clipping = true, bool enable_far_clipping = true)
-{
+inline std::pair<cv::Mat, cv::Mat> render(
+				core::Mesh mesh,
+				glm::tmat4x4<float> model_view_matrix,
+				glm::tmat4x4<float> projection_matrix,
+				int viewport_width,
+				int viewport_height,
+				const boost::optional<Texture>& texture = boost::none,
+				bool enable_backface_culling = false,
+				bool enable_near_clipping = true,
+				bool enable_far_clipping = true,
+				cv::Mat colourbuffer = cv::Mat::zeros(0, 0, CV_8UC4)) {
 	// Some internal documentation / old todos or notes:
 	// maybe change and pass depthBuffer as an optional arg (&?), because usually we never need it outside the renderer. Or maybe even a getDepthBuffer().
 	// modelViewMatrix goes to eye-space (camera space), projection does ortho or perspective proj.
@@ -139,7 +148,10 @@ inline std::pair<cv::Mat, cv::Mat> render(core::Mesh mesh, glm::tmat4x4<float> m
 	using cv::Mat;
 	using std::vector;
 
-	Mat colourbuffer = Mat::zeros(viewport_height, viewport_width, CV_8UC4); // make sure it's CV_8UC4?
+	if (colourbuffer.empty()) {
+		colourbuffer = Mat::zeros(viewport_height, viewport_width, CV_8UC4); // make sure it's CV_8UC4?
+	}
+
 	Mat depthbuffer = std::numeric_limits<float>::max() * Mat::ones(viewport_height, viewport_width, CV_64FC1);
 
 	// Vertex shader:
@@ -147,15 +159,17 @@ inline std::pair<cv::Mat, cv::Mat> render(core::Mesh mesh, glm::tmat4x4<float> m
 	// Assemble the vertices, project to clip space, and store as detail::Vertex (the internal representation):
 	vector<detail::Vertex<float>> clipspace_vertices;
 	clipspace_vertices.reserve(mesh.vertices.size());
+
 	for (int i = 0; i < mesh.vertices.size(); ++i) { // "previously": mesh.vertex
 		glm::tvec4<float> clipspace_coords = projection_matrix * model_view_matrix * mesh.vertices[i];
 		glm::tvec3<float> vertex_colour;
+
 		if (mesh.colors.empty()) {
 			vertex_colour = glm::tvec3<float>(0.5f, 0.5f, 0.5f);
-		}
-		else {
+		} else {
 			vertex_colour = mesh.colors[i];
 		}
+
 		clipspace_vertices.push_back(detail::Vertex<float>{clipspace_coords, vertex_colour, mesh.texcoords[i]});
 	}
 
@@ -234,6 +248,7 @@ inline std::pair<cv::Mat, cv::Mat> render(core::Mesh mesh, glm::tmat4x4<float> m
 	for (const auto& tri : triangles_to_raster) {
 		detail::raster_triangle(tri, colourbuffer, depthbuffer, texture, enable_far_clipping);
 	}
+
 	return std::make_pair(colourbuffer, depthbuffer);
 };
 
