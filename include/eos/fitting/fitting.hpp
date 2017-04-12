@@ -918,11 +918,11 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 	vector<eos::core::Mesh> current_meshs;
 
 	// The 2D and 3D point correspondences used for the fitting:
-	vector<vector<Vec4f>> model_points; // the points in the 3D shape model of all frames
-	vector<vector<int>> vertex_indices; // their vertex indices of all frames
-	vector<vector<Vec2f>> image_points; // the corresponding 2D landmark points of all frames
+	vector<vector<Vec4f>> model_points; // the points in the 3D shape model of all frames.
+	vector<vector<int>> vertex_indices; // their vertex indices of all frames.
+	vector<vector<Vec2f>> image_points; // the corresponding 2D landmark points of all frames.
 
-	vector<fitting::RenderingParameters> rendering_params;
+	vector<fitting::RenderingParameters> rendering_params; // list of rendering params for all frames.
 
 	// Generate meshes from current shapes.
 	for (int j = 0; j < num_images; ++j) {
@@ -931,8 +931,6 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 			Eigen::Map<const Eigen::VectorXf>(blendshape_coefficients[j].data(), blendshape_coefficients[j].size()
 		);
 
-//		current_combined_shapes.push_back(current_combined_shape);
-
 		eos::core::Mesh current_mesh = morphablemodel::sample_to_mesh(
 			current_combined_shape,
 			morphable_model.get_color_model().get_mean(),
@@ -940,8 +938,6 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 			morphable_model.get_color_model().get_triangle_list(),
 			morphable_model.get_texture_coordinates()
 		);
-
-//		current_meshs.push_back(current_mesh);
 
 		// Get the locations of the model locations of the meshes, vertex_indices and image points
 		// (equal to landmark coordinates), for every image / mesh.
@@ -955,6 +951,7 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 			image_points
 		);
 
+		// Start constructing a list of rendering parameters needed for reconstruction.
 		// Get the current points from the last added image points and model points
 		auto current_pose = fitting::estimate_orthographic_projection_linear(
 			image_points.back(), model_points.back(), true, image_height
@@ -972,7 +969,7 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 		current_combined_shape = current_pca_shape +
 			morphablemodel::to_matrix(blendshapes) *
 				Eigen::Map<const Eigen::VectorXf>(blendshape_coefficients[j].data(), blendshape_coefficients[j].size()
-			);
+		);
 
 		current_combined_shapes.push_back(current_combined_shape);
 
@@ -985,22 +982,6 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 
 		current_meshs.push_back(current_mesh);
 	}
-
-//	// Need to do an initial pose fit to do the contour fitting inside the loop.
-//	// We'll do an expression fit too, since face shapes vary quite a lot, depending on expressions.
-//	vector<fitting::RenderingParameters> rendering_params;
-//	for (int j = 0; j < num_images; ++j) {
-//		fitting::ScaledOrthoProjectionParameters current_pose = fitting::estimate_orthographic_projection_linear(image_points[j], model_points[j], true, image_height);
-//		fitting::RenderingParameters current_rendering_params(current_pose, image_width, image_height);
-//		rendering_params.push_back(current_rendering_params);
-//
-//		cv::Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(current_rendering_params, image_width, image_height);
-//		blendshape_coefficients[j] = fitting::fit_blendshapes_to_landmarks_nnls(blendshapes, current_pca_shape, affine_from_ortho, image_points[j], vertex_indices[j]);
-//
-//		// Mesh with same PCA coeffs as before, but new expression fit (this is relevant if no initial blendshape coeffs have been given):
-//		current_combined_shapes[j] = current_pca_shape + morphablemodel::to_matrix(blendshapes) * Eigen::Map<const Eigen::VectorXf>(blendshape_coefficients[j].data(),blendshape_coefficients[j].size());
-//		current_meshs[j] = morphablemodel::sample_to_mesh(current_combined_shapes[j], morphable_model.get_color_model().get_mean(), morphable_model.get_shape_model().get_triangle_list(), morphable_model.get_color_model().get_triangle_list(), morphable_model.get_texture_coordinates());
-//	}
 
 	// The static (fixed) landmark correspondences which will stay the same throughout
 	// the fitting (the inner face landmarks):
