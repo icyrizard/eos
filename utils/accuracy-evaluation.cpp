@@ -25,6 +25,7 @@
 #include "eos/render/texture_extraction.hpp"
 #include "eos/video/Keyframe.hpp"
 #include "eos/fitting/ReconstructionData.hpp"
+#include "eos/video/BufferedVideoIterator.hpp"
 
 #include "opencv2/core/core.hpp"
 #include "opencv2/opencv.hpp"
@@ -166,34 +167,39 @@ void evaluate_accuracy(
  * @param rendering_paramss
  * @param landmark_list
  * @param morphable_model
- * @param blend_shapes
+ * @param blendshapes
  * @param meshs
  * @param pca_shape_coefficients
- * @param blend_shape_coefficients
+ * @param blendshape_coefficients
  * @param fitted_image_points
  * @param annotations
  * @param landmark_mapper
  * @param settings
  * @param n_iter
  */
-void output_render(
-		std::deque<eos::video::Keyframe> key_frames,
+void render_output(
+		std::vector<eos::video::Keyframe> key_frames,
 		std::vector<fitting::RenderingParameters> rendering_paramss,
 		std::vector<core::LandmarkCollection<cv::Vec2f>> landmark_list,
-		morphablemodel::MorphableModel morphable_model,
-		vector<morphablemodel::Blendshape> blend_shapes,
 		vector<core::Mesh> meshs,
 		std::vector<float> pca_shape_coefficients,
-		std::vector<std::vector<float>> blend_shape_coefficients,
+		std::vector<std::vector<float>> blendshape_coefficients,
 		std::vector<std::vector<cv::Vec2f>> fitted_image_points,
 		std::vector<std::string> annotations,
-		core::LandmarkMapper landmark_mapper,
+		fitting::ReconstructionData reconstruction_data,
+		Mat last_frame,
+		int last_frame_number,
 		boost::property_tree::ptree settings,
 		int n_iter) {
 
 	Mat merged_isomap;
 	WeightedIsomapAveraging isomap_averaging(60.f); // merge all triangles that are facing <60° towards the camera
 	eos::video::PcaCoefficientMerging pca_shape_merging;
+
+	auto landmark_mapper = reconstruction_data.landmark_mapper;
+	auto blendshapes = reconstruction_data.blendshapes;
+	auto morphable_model = reconstruction_data.morphable_model;
+	auto landmarks = reconstruction_data.landmark_list[last_frame_number];
 
 	auto outputfilebase = annotations[0];
 
@@ -202,8 +208,11 @@ void output_render(
 
 		auto unmodified_frame = frame.clone();
 		int frame_number = key_frames[i].frame_number;
+		float yaw_angle = glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
 
-//		float yaw_angle = glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
+		cv::imwrite("/tmp/eos/" +
+			std::to_string(frame_number) + "_" + std::to_string(yaw_angle) + ".png", frame);
+
 		int frame_width = frame.cols;
 		int frame_height = frame.rows;
 
@@ -215,29 +224,47 @@ void output_render(
 				unmodified_frame,
 				true,
 				render::TextureInterpolation::NearestNeighbour,
-				512
-		);
+				512);
 
 		// Merge the isomaps - add the current one to the already merged ones:
 		merged_isomap = isomap_averaging.add_and_merge(isomap);
 	}
 
 	// Get last frame (that's the newest one).
-	Mat frame = key_frames.back().frame;
-	auto last_rendering_params = rendering_paramss.back();
-	auto last_blend_coefficients = blend_shape_coefficients.back();
-
+	Mat frame = last_frame.clone();
 	int frame_width = frame.cols;
 	int frame_height = frame.rows;
 
+	vector<cv::Vec4f> model_points;
+	vector<int> vertex_indices;
+	vector<cv::Vec2f> image_points;
+
+	// make a new one
+	std::vector<float> blend_shape_coefficients;
+
+	auto mesh = fitting::generate_new_mesh(
+		morphable_model,
+		blendshapes,
+		pca_shape_coefficients, // current pca_coeff will be the mean for the first iterations.
+		blend_shape_coefficients);
+
+	// Will yield model_points, vertex_indices and image_points
+	// todo: should this function not come from mesh?
+	core::get_mesh_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
+
+	auto current_pose = fitting::estimate_orthographic_projection_linear(
+		image_points, model_points, true, frame_height);
+
+	fitting::RenderingParameters rendering_params(current_pose, frame_width, frame_height);
+
 	// Same for the shape:
 	pca_shape_coefficients = pca_shape_merging.add_and_merge(pca_shape_coefficients);
-	auto blendshapes_as_basis = morphablemodel::to_matrix(blend_shapes);
+
+	auto blendshapes_as_basis = morphablemodel::to_matrix(blendshapes);
 	auto merged_shape = morphable_model.get_shape_model().draw_sample(pca_shape_coefficients) +
 						blendshapes_as_basis *
-						Eigen::Map<const Eigen::VectorXf>(last_blend_coefficients.data(),
-														  last_blend_coefficients.size()
-						);
+						Eigen::Map<const Eigen::VectorXf>(blend_shape_coefficients.data(),
+														  blend_shape_coefficients.size());
 
 	auto merged_mesh = morphablemodel::sample_to_mesh(
 			merged_shape,
@@ -250,24 +277,33 @@ void output_render(
 
 	// Render the model in a separate window using the estimated pose, shape and merged texture:
 	Mat rendering;
+
 	// render needs 4 channels 8 bits image, needs a two step conversion.
 	cvtColor(frame, rendering, CV_BGR2BGRA);
 
 	// make sure the image is CV_8UC4, maybe do check first?
 	rendering.convertTo(rendering, CV_8UC4);
 
+	Mat affine_cam = fitting::get_3x4_affine_camera_matrix(rendering_params, frame_width, frame_height);
+	Mat isomap = render::extract_texture(
+		merged_mesh,
+		affine_cam,
+		last_frame,
+		true,
+		render::TextureInterpolation::NearestNeighbour,
+		512);
+
 	std::tie(rendering, std::ignore) = render::render(
 			merged_mesh,
-			last_rendering_params.get_modelview(),
-			last_rendering_params.get_projection(),
+			rendering_params.get_modelview(),
+			rendering_params.get_projection(),
 			frame_width,
 			frame_height,
-			render::create_mipmapped_texture(merged_isomap),
+			render::create_mipmapped_texture(isomap),
 			true,
 			false,
 			false,
-			rendering
-	);
+			rendering);
 
 	cv::imshow("render", rendering);
 	cv::waitKey(10);
@@ -279,10 +315,10 @@ void output_render(
  * @param rendering_paramss
  * @param landmark_list
  * @param morphable_model
- * @param blend_shapes
+ * @param blendshapes
  * @param meshs
  * @param pca_shape_coefficients
- * @param blend_shape_coefficients
+ * @param blendshape_coefficients
  * @param fitted_image_points
  * @param annotations
  * @param landmark_mapper
@@ -290,111 +326,141 @@ void output_render(
  * @param n_iter
  */
 void evaluate_results(
-		std::deque<eos::video::Keyframe> key_frames,
+		std::vector<eos::video::Keyframe> key_frames,
 		std::vector<fitting::RenderingParameters> rendering_paramss,
-		std::vector<core::LandmarkCollection<cv::Vec2f>> landmark_list,
-		morphablemodel::MorphableModel morphable_model,
-		vector<morphablemodel::Blendshape> blend_shapes,
 		vector<core::Mesh> meshs,
 		std::vector<float> pca_shape_coefficients,
-		std::vector<std::vector<float>> blend_shape_coefficients,
+		std::vector<std::vector<float>> blendshape_coefficients,
 		std::vector<std::vector<cv::Vec2f>> fitted_image_points,
 		std::vector<std::string> annotations,
-		core::LandmarkMapper landmark_mapper,
+		fitting::ReconstructionData reconstruction_data,
 		boost::property_tree::ptree settings,
 		int n_iter) {
 
-	WeightedIsomapAveraging isomap_averaging(60.f); // merge all triangles that are facing <60° towards the camera
+	WeightedIsomapAveraging isomap_averaging(10.f); // merge all triangles that are facing <60° towards the camera
 
 	Mat merged_isomap;
 	fs::path outputfilebase = annotations[0];
 
+	auto landmark_mapper = reconstruction_data.landmark_mapper;
+	auto blendshapes = reconstruction_data.blendshapes;
+	auto morphable_model = reconstruction_data.morphable_model;
+
+
 	// The 3D head pose can be recovered as follows:
 	for (uint i = 0; i < key_frames.size(); ++i) {
-		float yaw_angle = glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
 		int frame_number = key_frames[i].frame_number;
+		auto landmarks = key_frames[i].fitting_result.landmarks;
+		auto rendering_params = key_frames[i].fitting_result.rendering_parameters;
+		float yaw_angle = key_frames[i].yaw_angle;
+
 		Mat frame = key_frames[i].frame;
 
 		int frame_width = frame.cols;
 		int frame_height = frame.rows;
 
+		Mat outimg = frame.clone();
+
 		// and similarly for pitch and roll.
 		// Extract the texture from the image using given mesh and camera parameters:
 		Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(
-				rendering_paramss[i], frame_width, frame_height
-		);
+			rendering_params, frame_width, frame_height);
+
+//		for (auto &&lm : landmarks) {
+//			cv::rectangle(
+//					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
+//					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
+//			);
+//		}
+//		// Draw the fitted mesh as wireframe, and save the image:
+//		draw_wireframe(
+//				outimg,
+//				meshs[i],
+//				rendering_params.get_modelview(),
+//				rendering_params.get_projection(),
+//				fitting::get_opencv_viewport(frame_width, frame_height));
+//
+//		cv::imshow("Img", outimg);
+//		cv::waitKey(1);
 
 		// Draw the loaded landmarks:
 		Mat isomap = render::extract_texture(meshs[i], affine_from_ortho, frame);
-		Mat outimg = frame.clone();
-
-		for (auto &&lm : landmark_list[i]) {
-			cv::rectangle(
-					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
-			);
-		}
-
-		// Draw the fitted mesh as wireframe, and save the image:
-		draw_wireframe(
-				outimg,
-				meshs[i],
-				rendering_paramss[i].get_modelview(),
-				rendering_paramss[i].get_projection(),
-				fitting::get_opencv_viewport(frame_width, frame_height)
-		);
-
-		fs::path path = (fs::path(annotations[frame_number]).parent_path() / "eval");
-		std::string outputfile = (path / fs::path(annotations[frame_number]).replace_extension("").filename()).string();
-		std::string iter = "_" + std::to_string(n_iter) + "_" + std::to_string(i);
-		cv::imwrite(outputfile + iter + ".annotated.png", outimg);
-
-		// save frontal rendering with texture:
-		Mat frontal_rendering;
-		glm::mat4 modelview_frontal = glm::mat4( 1.0 );
-		core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
-				morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
-				morphable_model.get_color_model().get_mean(),
-				morphable_model.get_shape_model().get_triangle_list(),
-				morphable_model.get_color_model().get_triangle_list(),
-				morphable_model.get_texture_coordinates()
-		);
-
-		outimg = frame.clone();
-		cv::imwrite(outputfile + iter + ".isomap.png", isomap);
 
 		// merge the isomaps:
 		merged_isomap = isomap_averaging.add_and_merge(isomap);
 
-		std::tie(frontal_rendering, std::ignore) = eos::render::render(
-				neutral_expression,
-				rendering_paramss[i].get_modelview(),
-				rendering_paramss[i].get_projection(),
-				frame_width,
-				frame_height,
-				render::create_mipmapped_texture(merged_isomap),
-				true,
-				false,
-				false,
-				outimg
-		);
+//		cv::imshow("isomap", isomap);
+//		cv::imshow("merged_isomap", merged_isomap);
+//
+//		Mat outimg = frame.clone();
+//
+//		for (auto &&lm : landmarks) {
+//			cv::rectangle(
+//					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
+//					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
+//			);
+//		}
+//		// Draw the fitted mesh as wireframe, and save the image:
+//		draw_wireframe(
+//				outimg,
+//				meshs[i],
+//				rendering_params.get_modelview(),
+//				rendering_params.get_projection(),
+//				fitting::get_opencv_viewport(frame_width, frame_height));
+//
+//		cv::imshow("Img", outimg);
+//		cv::waitKey(0);
 
-		cv::imwrite(outputfile + iter + ".frontal.png", frontal_rendering);
-		evaluate_accuracy(
-			landmark_list[i],
-			landmark_mapper,
-			meshs[i],
-			affine_from_ortho,
-			settings
-		);
+//		fs::path path = (fs::path(annotations[frame_number]).parent_path() / "eval");
+//		std::string outputfile = (path / fs::path(annotations[frame_number]).replace_extension("").filename()).string();
+//		std::string iter = "_" + std::to_string(n_iter) + "_" + std::to_string(i);
+//		cv::imwrite(outputfile + iter + ".annotated.png", outimg);
+//
+//		// save frontal rendering with texture:
+//		glm::mat4 modelview_frontal = glm::mat4( 1.0 );
+//		core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
+//				morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
+//				morphable_model.get_color_model().get_mean(),
+//				morphable_model.get_shape_model().get_triangle_list(),
+//				morphable_model.get_color_model().get_triangle_list(),
+//				morphable_model.get_texture_coordinates()
+//		);
+
+//		cv::imwrite(outputfile + iter + ".isomap.png", isomap);
+
+//		Mat frontal_rendering;
+//		std::tie(frontal_rendering, std::ignore) = eos::render::render(
+//				neutral_expression,
+//				rendering_params.get_modelview(),
+//				rendering_params.get_projection(),
+//				frame_width,
+//				frame_height,
+//				render::create_mipmapped_texture(merged_isomap),
+//				true,
+//				false,
+//				false
+//		);
+
+//		cv::imwrite(outputfile + iter + ".frontal.png", frontal_rendering);
+//		evaluate_accuracy(
+//			landmarks,
+//			landmark_mapper,
+//			meshs[i],
+//			affine_from_ortho,
+//			settings
+//		);
 	}
 
 	// save the merged isomap:
 	std::string iter = "_" + std::to_string(n_iter);
 	fs::path path = (fs::path(annotations[n_iter]).parent_path() / "eval");
+	fs::create_directory(path);
 	std::string outputfile = (path / fs::path(annotations[n_iter]).replace_extension("").filename()).string();
 
-	cv::imwrite(outputfile + iter + ".isomap.png", merged_isomap);
+	// sharpen isomap
+	Mat sharpen = isomap_averaging.sharpen(merged_isomap);
+
+	cv::imwrite(outputfile + iter + ".isomap.png", sharpen);
 
 	// save the frontal rendering with merged isomap:
 	Mat frontal_rendering;
@@ -407,23 +473,20 @@ void evaluate_results(
 			morphable_model.get_texture_coordinates()
 	);
 
-	std::tie(frontal_rendering, std::ignore) = render::render(
-			neutral_expression,
-			modelview_frontal,
-			glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f),
-			512, 512,
-			render::create_mipmapped_texture(merged_isomap),
-			true,
-			false,
-			false
-	);
-
-	cv::imwrite(outputfile + iter + ".merged_frontal.png", frontal_rendering);
+//	std::tie(frontal_rendering, std::ignore) = render::render(
+//			neutral_expression,
+//			modelview_frontal,
+//			glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f),
+//			512, 512,
+//			render::create_mipmapped_texture(merged_isomap),
+//			true,
+//			false,
+//			false
+//	);
+//	cv::imwrite(outputfile + iter + ".merged_frontal.png", frontal_rendering);
 
 	// Save the mesh as textured obj:
-	core::write_textured_obj(morphable_model.draw_sample(
-			pca_shape_coefficients, std::vector<float>()), outputfile + iter + ".obj");
-
+	core::write_textured_obj(neutral_expression, outputfile + iter + ".obj");
 	std::cout << "Finished fitting and wrote result mesh and isomap to files with basename " << outputfile + iter + ".obj" << std::endl;
 }
 
@@ -450,7 +513,7 @@ boost::property_tree::ptree get_reconstruction_config(std::string filename) {
  * @return
  */
 vector<core::LandmarkCollection<cv::Vec2f>> sample_landmarks(
-		std::deque<eos::video::Keyframe> key_frames, vector<core::LandmarkCollection<cv::Vec2f>> landmarks) {
+		std::vector<eos::video::Keyframe> key_frames, vector<core::LandmarkCollection<cv::Vec2f>> landmarks) {
 	vector<core::LandmarkCollection<cv::Vec2f>> sublist;
 
 	for (auto& f : key_frames) {
@@ -523,8 +586,8 @@ int main(int argc, char *argv[]) {
 	morphablemodel::MorphableModel morphable_model;
 	std::vector<float> pca_shape_coefficients;
 
-	// List of blend_shapes coefficients:
-	std::vector<std::vector<float>> blend_shape_coefficients;
+	// List of blendshapes coefficients:
+	std::vector<std::vector<float>> blendshape_coefficients;
 	std::vector<std::vector<cv::Vec2f>> fitted_image_points;
 
 	// These will be the final 2D and 3D points used for the fitting:
@@ -558,7 +621,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	// The expression blendshapes:
-	auto blend_shapes = morphablemodel::load_blendshapes(blendshapesfile.string());
+	auto blendshapes = morphablemodel::load_blendshapes(blendshapesfile.string());
 
 	// These two are used to fit the front-facing contour to the ibug contour landmarks:
 	auto model_contour = contourfile.empty() ? fitting::ModelContour() : fitting::ModelContour::load(contourfile.string());
@@ -568,35 +631,39 @@ int main(int argc, char *argv[]) {
 
 	// Read .ini file to accommodate.
 	auto settings = get_reconstruction_config(reconstruction_config.string());
+	auto reconstruction_data = eos::fitting::ReconstructionData{
+		morphable_model, blendshapes, landmark_mapper, landmark_list, model_contour, ibug_contour, edge_topology};
 
 	// Start with the video play and get video file:
 	BufferedVideoIterator vid_iterator;
 
 	try {
-		vid_iterator = BufferedVideoIterator(videofile.string(), settings);
+		vid_iterator = BufferedVideoIterator(videofile.string(), reconstruction_data, settings);
 	} catch(std::runtime_error &e) {
 		std::cout << e.what() << std::endl;
 		return EXIT_FAILURE;
 	}
 
 	// Start getting video frames:
-	std::deque<eos::video::Keyframe> key_frames = vid_iterator.next();
-	eos::fitting::ReconstructionData data;
+	vid_iterator.start();
 
 	// Count the amount of iterations:
 	int n_iter = 0;
-	while(!(key_frames.empty())) {
-//		if (n_iter == 100) {
-//			break;
-//		}
+	while(vid_iterator.is_playing()) {
+		auto key_frames = vid_iterator.get_keyframes();
+
 		// Generate a sublist of the total available landmark list:
 		auto landmark_sublist = sample_landmarks(key_frames, landmark_list);
+//		std::cout << vid_iterator.to_string() << std::endl;
 
-		// Fit shape and pose:
-		std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_2(
+		// it makes no sense to update pca_coeff if nothing in the buffer has changed:
+		if (vid_iterator.has_changed()) {
+			std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
+			// Fit shape and pose:
+			std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_2(
 				morphable_model,
-				blend_shapes,
-				landmark_sublist,
+				blendshapes,
+				key_frames,
 				landmark_mapper,
 				key_frames[0].frame.cols,
 				key_frames[0].frame.rows,
@@ -609,33 +676,68 @@ int main(int argc, char *argv[]) {
 				30.0f,
 				boost::none,
 				pca_shape_coefficients,
-				blend_shape_coefficients,
+				blendshape_coefficients,
 				fitted_image_points
-		);
+			);
 
-//		vid_iterator.setReconstructionResults(reconstructionData);
+			vid_iterator.update_reconstruction_coeff(pca_shape_coefficients);
 
-		// Render output:
-		output_render(
+			evaluate_results(
 				key_frames,
 				rendering_paramss,
-				landmark_sublist,
-				morphable_model,
-				blend_shapes,
 				meshs,
 				pca_shape_coefficients,
-				blend_shape_coefficients,
+				blendshape_coefficients,
 				fitted_image_points,
 				annotations,
-				landmark_mapper,
+				reconstruction_data,
 				settings,
 				n_iter
-		);
+			);
+
+		} else {
+			std::cout << "No reconstruction - buffer did not change" << std::endl;
+		}
+
+//		// Render output:
+//		render_output(
+//				key_frames,
+//				rendering_paramss,
+//				landmark_sublist,
+//				meshs,
+//				pca_shape_coefficients,
+//				blendshape_coefficients,
+//				fitted_image_points,
+//				annotations,
+//				reconstruction_data,
+//				vid_iterator.last_frame,
+//				vid_iterator.last_frame_number,
+//				settings,
+//				n_iter
+//		);
+
 
 		// Get new frames:
-		key_frames = vid_iterator.next();
 		n_iter++;
 	}
+
+	auto key_frames = vid_iterator.get_keyframes();
+
+	std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
+	evaluate_results(
+		key_frames,
+		rendering_paramss,
+		meshs,
+		pca_shape_coefficients,
+		blendshape_coefficients,
+		fitted_image_points,
+		annotations,
+		reconstruction_data,
+		settings,
+		n_iter
+	);
+
+	//todo: we could build our final obj here?
 
 	return EXIT_SUCCESS;
 }

@@ -16,7 +16,6 @@
 
 #include <vector>
 #include <string>
-#include <vector>
 #include <algorithm>
 #include <iostream>
 #include <fstream>
@@ -189,27 +188,83 @@ namespace eos {
 			return std::make_pair(landmark_collection_list, annotations);
 		}
 
+	/**
+     * Get a bounding box around the landmarks
+	 * @param landmarks
+	 * @return
+	 */
+		cv::Rect get_face_roi(vector<Vec2f>image_points, int image_width, int image_height) {
+			cv::Rect bbox = cv::boundingRect(image_points);
+
+			// cap on the image width and height.
+			bbox.width = bbox.x + bbox.width < image_width ? bbox.width: image_width - bbox.x - 1;
+			bbox.height = bbox.y + bbox.height < image_height ? bbox.height: image_height - bbox.y - 1;
+
+			return bbox;
+		}
 		/**
+		 * Get the mesh coordinates.
 		 *
 		 * @tparam vec2f
 		 * @tparam vec4f
-		 * @param landmarks
-		 * @param landmark_mapper
-		 * @param mesh
-		 * @param model_points
-		 * @param vertex_indices
-		 * @param image_points
+		 * @param[in] landmarks
+		 * @param[in] landmark_mapper
+		 * @param[in] mesh
+		 * @param[in,out] model_points
+		 * @param[in,out] vertex_indices
+		 * @param[in,out] image_points
+		 */
+		template <typename vec2f>
+		inline void get_mesh_coordinates(core::LandmarkCollection<vec2f> landmarks,
+						 const core::LandmarkMapper& landmark_mapper,
+						 eos::core::Mesh& mesh,
+						 vector<Vec4f>& model_points,
+						 vector<int>& vertex_indices,
+						 vector<vec2f>& image_points) {
+			for (auto &lm: landmarks) {
+				auto converted_name = landmark_mapper.convert(lm.name);
+				if (!converted_name) { // no mapping defined for the current landmark
+					continue;
+				}
+
+				int vertex_idx = std::stoi(converted_name.get());
+				// todo: see how you can support a template for Vec4f.
+				Vec4f vertex(
+					mesh.vertices[vertex_idx].x,
+					mesh.vertices[vertex_idx].y,
+					mesh.vertices[vertex_idx].z,
+					mesh.vertices[vertex_idx].w
+				);
+
+				model_points.emplace_back(vertex);
+				vertex_indices.emplace_back(vertex_idx);
+				image_points.emplace_back(lm.coordinates);
+			}
+		}
+
+		/**
+		 *
+		 * Get the mesh coordinates, given a set of landmarks.
+		 *
+		 * @tparam vec2f
+		 * @tparam vec4f
+		 * @param[in] landmarks
+		 * @param[in] landmark_mapper
+		 * @param[in] mesh
+		 * @param[in,out] model_points
+		 * @param[in,out] vertex_indices
+		 * @param[in,out] image_points
 		 */
 		template <typename vec2f, typename vec4f>
-		inline void subselect_landmarks(core::LandmarkCollection<vec2f> landmarks,
+		inline void get_landmark_coordinates(core::LandmarkCollection<vec2f> landmarks,
 										const core::LandmarkMapper& landmark_mapper,
 										eos::core::Mesh& mesh,
 										vector<vector<vec4f>>& model_points,
 										vector<vector<int>>& vertex_indices,
 										vector<vector<vec2f>>& image_points) {
-			vector<Vec4f> current_model_points;
+			vector<vec4f> current_model_points;
 			vector<int> current_vertex_indices;
-			vector<Vec2f> current_image_points;
+			vector<vec2f> current_image_points;
 
 			for (auto &lm: landmarks) {
 				auto converted_name = landmark_mapper.convert(lm.name);
@@ -233,60 +288,6 @@ namespace eos {
 			model_points.push_back(current_model_points);
 			vertex_indices.push_back(current_vertex_indices);
 			image_points.push_back(current_image_points);
-		}
-
-		/**
-		 * As the name suggests, in the multi-frame fitting we can subselect landmarks according to the
-		 * landmark mapper.
-		 *
-		 * @tparam vec2f
-		 * @param[in] landmarks
-		 * @param[in] landmark_mapper
-		 * @param[in] meshs
-		 * @param[out] model_points
-		 * @param[out] vertex_indices
-		 * @param[out] image_points
-		 */
-		template <typename vec2f, typename vec4f>
-		inline void subselect_landmarks_multi(const std::vector<core::LandmarkCollection<vec2f>>& landmarks,
-											  const core::LandmarkMapper& landmark_mapper,
-											  vector<eos::core::Mesh> meshs,
-											  vector<vector<vec4f>>& model_points,
-											  vector<vector<int>>& vertex_indices,
-											  vector<vector<vec2f>>& image_points) {
-
-			vector<Vec4f> current_model_points;
-			vector<int> current_vertex_indices;
-			vector<Vec2f> current_image_points;
-
-			// Sub-select all the landmarks which we have a mapping for (i.e. that are defined in the 3DMM),
-			// and get the corresponding model points (mean if given no initial coeffs, from the computed shape otherwise):
-			for (int i = 0; i < landmarks.size(); i++) {
-				auto landmark_list = landmarks[i];
-				auto mesh = meshs[i];
-
-				for (auto &lm: landmark_list) {
-					auto converted_name = landmark_mapper.convert(lm.name);
-					if (!converted_name) { // no mapping defined for the current landmark
-						continue;
-					}
-					int vertex_idx = std::stoi(converted_name.get());
-					Vec4f vertex(
-						mesh.vertices[vertex_idx].x,
-						mesh.vertices[vertex_idx].y,
-						mesh.vertices[vertex_idx].z,
-						mesh.vertices[vertex_idx].w
-					);
-
-					current_model_points.emplace_back(vertex);
-					current_vertex_indices.emplace_back(vertex_idx);
-					current_image_points.emplace_back(lm.coordinates);
-				}
-
-				model_points.push_back(current_model_points);
-				vertex_indices.push_back(current_vertex_indices);
-				image_points.push_back(current_image_points);
-			}
 		}
 	}
 }

@@ -1,19 +1,24 @@
-//
-// Created by RA Torenvliet on 12/04/2017.
-//
+#ifndef EOS_RECONSTRUCTIONDATA_HPP_
+#define EOS_RECONSTRUCTIONDATA_HPP_
 
-#ifndef EOS_RECONSTRUCTIONDATA_HPP
-#define EOS_RECONSTRUCTIONDATA_HPP
+#include "eos/core/Landmark.hpp"
+#include "eos/core/LandmarkMapper.hpp"
+#include "eos/morphablemodel/MorphableModel.hpp"
+#include "eos/morphablemodel/Blendshape.hpp"
+#include "eos/morphablemodel/EdgeTopology.hpp"
+#include "eos/fitting/contour_correspondence.hpp"
 
 namespace eos {
 namespace fitting {
 
 struct ReconstructionData {
-  morphablemodel::MorphableModel morphable_model;
-  std::vector <morphablemodel::Blendshape> blendshapes;
-  std::vector <core::LandmarkCollection<cv::Vec2f>> landmarks;
-  std::vector <cv::Mat> affine_camera_matrix;
-
+	morphablemodel::MorphableModel morphable_model;
+	std::vector <morphablemodel::Blendshape> blendshapes;
+	eos::core::LandmarkMapper landmark_mapper;
+	std::vector <core::LandmarkCollection<cv::Vec2f>> landmark_list;
+	eos::fitting::ModelContour model_contour;
+	eos::fitting::ContourLandmarks contour_landmarks;
+	eos::morphablemodel::EdgeTopology edge_topology;
 };
 
 }

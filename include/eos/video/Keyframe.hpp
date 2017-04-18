@@ -24,6 +24,8 @@
 
 #include "eos/fitting/FittingResult.hpp"
 #include "eos/fitting/RenderingParameters.hpp"
+#include "eos/fitting/ReconstructionData.hpp"
+#include "eos/fitting/fitting.hpp"
 #include "eos/morphablemodel/Blendshape.hpp"
 #include "eos/morphablemodel/MorphableModel.hpp"
 #include "eos/render/texture_extraction.hpp"
@@ -33,6 +35,7 @@
 #include "opencv2/core/core.hpp"
 
 #include <deque>
+#include <cstdlib>
 
 namespace eos {
 namespace video {
@@ -72,108 +75,26 @@ public:
 	 * @param frame
 	 * @param fitting_result
 	 */
-	Keyframe(float score, cv::Mat frame, fitting::FittingResult fitting_result) {
+	Keyframe(float score, cv::Mat frame, fitting::FittingResult fitting_result, int frame_number) {
 		this->frame = frame;
 		this->score = score;
 		this->fitting_result = fitting_result;
+		this->frame_number = frame_number;
 	}
 
+	// The original frame
 	cv::Mat frame;
+
+	// Frame number such that order between frames can be maintained.
 	int frame_number;
+
+	// laplacian score for example
 	float score = 0.0f;
 
+	// rotation from in fitting results
+	float yaw_angle = 0.0f;
+
 	fitting::FittingResult fitting_result;
-};
-
-/**
- * @brief A keyframe selection that selects keyframes according to yaw pose and score.
- *
- * Separates the +-90� yaw pose range into 20� intervals (i.e. 90 to 70, ..., -10 to 10, ...), and puts frames
- * into each bin, until full. Replaces keyframes with better frames if the score is higher than that of
- * current keyframes.
- *
- * The yaw pose bins are currently hard-coded (9 bins, 20� intervals).
- */
-struct PoseBinningKeyframeSelector
-{
-public:
-    PoseBinningKeyframeSelector(int frames_per_bin = 2) : frames_per_bin(frames_per_bin)
-    {
-        bins.resize(num_yaw_bins);
-    };
-
-    bool try_add(float frame_score, cv::Mat image, const fitting::FittingResult& fitting_result)
-    {
-        // Determine whether to add or not:
-        auto yaw_angle = glm::degrees(glm::yaw(fitting_result.rendering_parameters.get_rotation()));
-        auto idx = angle_to_index(yaw_angle);
-        bool add_frame = false;
-        if (bins[idx].size() < frames_per_bin) // always add when we don't have enough frames
-            add_frame =
-                true; // definitely adding - we wouldn't have to go through the for-loop on the next line.
-        for (auto&& f : bins[idx])
-        {
-            if (frame_score > f.score)
-                add_frame = true;
-        }
-        if (!add_frame)
-        {
-            return false;
-        }
-        // Add the keyframe:
-        bins[idx].push_back(video::Keyframe{frame_score, image, fitting_result});
-        if (bins[idx].size() > frames_per_bin)
-        {
-            // need to remove the lowest one:
-            std::sort(std::begin(bins[idx]), std::end(bins[idx]),
-                      [](const auto& lhs, const auto& rhs) { return lhs.score > rhs.score; });
-            bins[idx].resize(frames_per_bin);
-        }
-        return true;
-    };
-
-    // Returns the keyframes as a vector.
-    std::vector<Keyframe> get_keyframes() const
-    {
-        std::vector<Keyframe> keyframes;
-        for (auto&& b : bins)
-        {
-            for (auto&& f : b)
-            {
-                keyframes.push_back(f);
-            }
-        }
-        return keyframes;
-    };
-
-private:
-    using BinContent = std::vector<Keyframe>;
-    std::vector<BinContent> bins;
-    const int num_yaw_bins = 9;
-    int frames_per_bin;
-
-    // Converts a given yaw angle to an index in the internal bins vector.
-    // Assumes 9 bins and 20� intervals.
-    static std::size_t angle_to_index(float yaw_angle)
-    {
-        if (yaw_angle <= -70.f)
-            return 0;
-        if (yaw_angle <= -50.f)
-            return 1;
-        if (yaw_angle <= -30.f)
-            return 2;
-        if (yaw_angle <= -10.f)
-            return 3;
-        if (yaw_angle <= 10.f)
-            return 4;
-        if (yaw_angle <= 30.f)
-            return 5;
-        if (yaw_angle <= 50.f)
-            return 6;
-        if (yaw_angle <= 70.f)
-            return 7;
-        return 8;
-    };
 };
 
 /**
@@ -270,156 +191,6 @@ cv::Mat merge_weighted_mean(const std::vector<Keyframe>& keyframes,
     return merged_isomap;
 };
 
-/**
- * @brief Computes the variance of laplacian of the given image or patch.
- *
- * This should compute the variance of the laplacian of a given image or patch, according to the 'LAPV'
- * algorithm of Pech 2000.
- * It is used as a focus or blurriness measure, i.e. to assess the quality of the given patch.
- *
- * @param[in] image Input image or patch.
- * @return The computed variance of laplacian score.
- */
-double variance_of_laplacian(const cv::Mat& image)
-{
-    cv::Mat laplacian;
-    cv::Laplacian(image, laplacian, CV_64F);
-
-    cv::Scalar mu, sigma;
-    cv::meanStdDev(laplacian, mu, sigma);
-
-    double focus_measure = sigma.val[0] * sigma.val[0];
-    return focus_measure;
-};
-
-/**
- * BufferedVideo Iterator will keep a buffer of the last seen n_frames. By calling .next() it will load a new
- * frame from the given video and you will get a pointer to the front of the buffer (which has n_frames).
- *
- * Just imagine a sliding window accross the video, this is what we aim to implement here.
- *
- * Example:
- *    vid_iterator = bufferedvideoiterator<cv::mat>(videofile.string(), landmark_annotation_list);
- *
- *    std::deque<cv::mat> frames = vid_iterator.next();
- *    while(!(frames.empty())) {
- *        for (std::deque<cv::mat>::iterator it = frames.begin(); it!=frames.end(); ++it) {
- *            std::cout << ' ' << *it;
- *        }
- *
- *         frames = vid_iterator.next();
- *    }
- *
- * @tparam T
- */
-// Note for this template: later we can use other templates for easy testing (not using cv:Mat but <int> for example).
-class BufferedVideoIterator {
-public:
-	int width;
-	int height;
-
-	BufferedVideoIterator() {};
-
-	// TODO: build support for setting the amount of max_frames in the buffer.
-	BufferedVideoIterator(std::string videoFilePath, boost::property_tree::ptree settings) {
-		std::ifstream file(videoFilePath);
-		std::cout << "video file path: " << videoFilePath << std::endl;
-		if (!file.is_open()) {
-			throw std::runtime_error("Error opening given file: " + videoFilePath);
-		}
-
-		cv::VideoCapture tmp_cap(videoFilePath); // open video file
-
-		if (!tmp_cap.isOpened()) { // check if we succeeded
-			throw std::runtime_error("Could not play video");
-		}
-
-		this->cap = tmp_cap;
-		this->max_frames = settings.get<int>("video.max_frames", 5);
-		this->min_frames = settings.get<int>("video.min_frames", 5);
-		this->drop_frames = settings.get<int>("video.drop_frames", 0);
-		this->laplacian_threshold = settings.get<int>("video.blur_threshold", 1000);
-
-		// TODO: Implement this.
-		this->skip_frames = settings.get<int>("video.skip_frames", 0);
-	}
-
-	/**
-	 * Set next frame and return frame_buffer.
-	 *
-	 * @return dequeue<Mat> frame buffer.
-	 *
-	 * TODO: build support for returning landmarks AND frames.
-	 */
-	std::deque <Keyframe> next() {
-		long frame_buffer_length = frame_buffer.size();
-
-		// Get a new frame from camera.
-		cv::Mat frame;
-		cap >> frame;
-
-		// Pop if we exceeded max_frames.
-		if (n_frames > max_frames) {
-			frame_buffer.pop_front();
-			n_frames--;
-		}
-
-		float frame_laplacian_score = static_cast<float>(variance_of_laplacian(frame));
-
-		if (frame_laplacian_score < laplacian_threshold && frame_laplacian_score > 0) {
-			frame_buffer.push_back(Keyframe(frame_laplacian_score, frame, total_frames_processed));
-			n_frames++;
-			std::cout << total_frames_processed << ": laplacian score " << frame_laplacian_score << std::endl;
-		} else {
-			std::cout << total_frames_processed << ": skipping frame(";
-			if (frame_laplacian_score == 0) {
-				std::cout << "total black): " << frame_laplacian_score << std::endl;
-			} else {
-				std::cout << "too blurry): " << frame_laplacian_score << std::endl;
-			}
-
-		}
-
-		total_frames_processed++;
-
-		// fill up the buffer until we hit the minimum frames we want in the buffer.
-		if(n_frames < min_frames) {
-			frame_buffer = next();
-		}
-
-		return frame_buffer;
-	}
-
-	std::deque <Keyframe> get_frame_buffer() {
-		return frame_buffer;
-	}
-
-private:
-	cv::VideoCapture cap;
-	std::deque<Keyframe> frame_buffer;
-
-	// TODO: make set-able
-	// total frames in processed, not persee in buffer (skipped frames)
-	int total_frames_processed = 0;
-
-	// total frames in buffer
-	int n_frames = 0;
-
-	// number of frames to skip at before starting
-	int skip_frames = 0;
-
-	// minimum amount of frames to keep in buffer.
-	int min_frames = 5;
-
-	// keep max_frames into the buffer.
-	int max_frames = 5;
-
-	// Note: these settings are for future use
-	int drop_frames = 0;
-
-	// laplacian threshold
-	double laplacian_threshold = 10000000;
-};
 
 /**
 * @brief Merges isomaps from a live video with a weighted averaging, based
@@ -486,6 +257,18 @@ public:
 		merged_isomap.convertTo(merged_isomap_uchar, CV_8UC4);
 		return merged_isomap_uchar;
 	};
+
+	cv::Mat sharpen(const cv::Mat& isomap) {
+		cv::Mat output;
+		cv::Mat kernel = (cv::Mat_<float>(5, 5) << -0.125, -0.125, -0.125, -0.125, -0.125,
+											  -0.125,  0.25 ,  0.25 ,  0.25 , -0.125,
+											  -0.125,  0.25 ,  1.   ,  0.25 , -0.125,
+											  -0.125,  0.25 ,  0.25 ,  0.25 , -0.125,
+											  -0.125, -0.125, -0.125, -0.125, -0.125);
+		cv::filter2D(isomap, output, isomap.depth(), kernel);
+
+		return output;
+	}
 
 private:
 	cv::Mat visibility_counter;
