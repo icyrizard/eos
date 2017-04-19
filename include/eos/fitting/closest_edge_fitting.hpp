@@ -46,12 +46,12 @@
 #include <cstddef>
 
 namespace eos {
-	namespace fitting {
+namespace fitting {
 
 /**
  * @brief Computes the intersection of the given ray with the given triangle.
  *
- * Uses the Möller-Trumbore algorithm algorithm "Fast Minimum Storage
+ * Uses the MÃ¶ller-Trumbore algorithm algorithm "Fast Minimum Storage
  * Ray/Triangle Intersection". Independent implementation, inspired by:
  * http://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection
  * The default eps (1e-6f) is from the paper.
@@ -391,6 +391,210 @@ inline std::pair<std::vector<cv::Vec2f>, std::vector<int>> find_occluding_edge_c
 	}
 	return { image_points, vertex_indices };
 };
+/**
+ * @brief Computes the vertices that lie on occluding boundaries, given a particular pose.
+ *
+ * This algorithm computes the edges that lie on occluding boundaries of the mesh.
+ * It performs a visibility text of each vertex, and returns a list of the (unique)
+ * vertices that make the boundary edges.
+ * An edge is defined as the line whose two adjacent faces normals flip the sign.
+ *
+ * @param[in] mesh The mesh to use.
+ * @param[in] edge_topology The edge topology of the given mesh.
+ * @param[in] R The rotation (pose) under which the occluding boundaries should be computed.
+ * @return A vector with unique vertex id's making up the edges.
+ */
+inline std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& mesh, const morphablemodel::EdgeTopology& edge_topology, glm::mat4x4 R)
+{
+	// Rotate the mesh:
+	std::vector<glm::vec4> rotated_vertices;
+	std::for_each(begin(mesh.vertices), end(mesh.vertices),
+				  [&rotated_vertices, &R](auto &&v) { rotated_vertices.push_back(R * v); });
+
+	// Compute the face normals of the rotated mesh:
+	std::vector<glm::vec3> facenormals;
+	for (auto &&f : mesh.tvi)
+	{ // for each face (triangle):
+		auto n = render::compute_face_normal(glm::vec3(rotated_vertices[f[0]]),
+											 glm::vec3(rotated_vertices[f[1]]),
+											 glm::vec3(rotated_vertices[f[2]]));
+		facenormals.push_back(n);
+	}
+
+	// Find occluding edges:
+	std::vector<int> occluding_edges_indices;
+	for (int edge_idx = 0; edge_idx < edge_topology.adjacent_faces.size(); ++edge_idx) // For each edge... Ef contains the indices of the two adjacent faces
+	{
+		const auto &edge = edge_topology.adjacent_faces[edge_idx];
+		if (edge[0] == 0) // ==> NOTE/Todo Need to change this if we use 0-based indexing!
+		{
+			// Edges with a zero index lie on the mesh boundary, i.e. they are only
+			// adjacent to one face.
+			continue;
+		}
+		// Compute the occluding edges as those where the two adjacent face normals
+		// differ in the sign of their z-component:
+		// Changing from 1-based indexing to 0-based!
+		if (glm::sign(facenormals[edge[0] - 1].z) != glm::sign(facenormals[edge[1] - 1].z))
+		{
+			// It's an occluding edge, store the index:
+			occluding_edges_indices.push_back(edge_idx);
+		}
+	}
+
+	// Select the vertices lying at the two ends of the occluding edges and remove duplicates:
+	// (This is what EdgeTopology::adjacent_vertices is needed for).
+	std::vector<int> occluding_vertices; // The model's contour vertices
+	for (auto &&edge_idx : occluding_edges_indices)
+	{
+		// Changing from 1-based indexing to 0-based!
+		occluding_vertices.push_back(edge_topology.adjacent_vertices[edge_idx][0] - 1);
+		occluding_vertices.push_back(edge_topology.adjacent_vertices[edge_idx][1] - 1);
+	}
+
+	// Remove duplicate vertex id's (std::unique works only on sorted sequences):
+	std::sort(begin(occluding_vertices), end(occluding_vertices));
+	occluding_vertices.erase(std::unique(begin(occluding_vertices), end(occluding_vertices)), end(occluding_vertices));
+
+	// Perform ray-casting to find out which vertices are not visible (i.e. self-occluded):
+	std::vector<bool> visibility;
+
+	int NUM_THREADS = 4;
+	auto t1 = std::chrono::high_resolution_clock::now();
+
+	 // we shoot the ray from the vertex towards the camera
+	glm::vec3 ray_direction(0.0f, 0.0f, 1.0f);
+
+#pragma omp parallel for schedule num_threads(NUM_THREADS)
+		for(int i = 0; i < occluding_vertices.size(); i++) {
+			const auto vertex_idx = occluding_vertices[i];
+			bool visible = true;
+
+			glm::vec3 ray_origin(rotated_vertices[vertex_idx]);
+
+			// For every tri of the rotated mesh:
+			for(int j = 0; j < mesh.tvi.size(); j++) {
+				auto tri = mesh.tvi[j];
+				auto &v0 = rotated_vertices[tri[0]];
+				auto &v1 = rotated_vertices[tri[1]];
+				auto &v2 = rotated_vertices[tri[2]];
+
+				auto intersect = ray_triangle_intersect(ray_origin, ray_direction, glm::vec3(v0), glm::vec3(v1), glm::vec3(v2), false);
+
+				// first is bool intersect, second is the distance t
+				if (intersect.first == true) {
+					// We've hit a triangle. Ray hit its own triangle. If it's behind the ray origin, ignore the intersection:
+					// Check if in front or behind?
+					if (intersect.second.get() <= 1e-4)
+					{
+						continue; // the intersection is behind the vertex, we don't care about it
+					}
+					// Otherwise, we've hit a genuine triangle, and the vertex is not visible:
+					visible = false;
+					break;
+				}
+			}
+
+			visibility.push_back(visible);
+		}
+
+	auto t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "test derp 1: " << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms" << std::endl;
+
+	// Remove vertices from occluding boundary list that are not visible:
+	std::vector<int> final_vertex_ids;
+	for (int i = 0; i < occluding_vertices.size(); ++i)
+	{
+		if (visibility[i] == true)
+		{
+			final_vertex_ids.push_back(occluding_vertices[i]);
+		}
+	}
+	return final_vertex_ids;
+};
+
+/**
+ * @brief For a given list of 2D edge points, find corresponding 3D vertex IDs.
+ *
+ * This algorithm first computes the 3D mesh's occluding boundary vertices under
+ * the given pose. Then, for each 2D image edge point given, it searches for the
+ * closest 3D edge vertex (projected to 2D). Correspondences lying further away
+ * than \c distance_threshold (times a scale-factor) are discarded.
+ * It returns a list of the remaining image edge points and their corresponding
+ * 3D vertex ID.
+ *
+ * The given \c rendering_parameters camery_type must be CameraType::Orthographic.
+ *
+ * The units of \c distance_threshold are somewhat complicated. The function
+ * uses squared distances, and the \c distance_threshold is further multiplied
+ * with a face-size and image resolution dependent scale factor.
+ * It's reasonable to use correspondences that are 10 to 15 pixels away on a
+ * 1280x720 image with s=0.93. This would be a distance_threshold of around 200.
+ * 64 might be a conservative default.
+ *
+ * @param[in] mesh The 3D mesh.
+ * @param[in] edge_topology The mesh's edge topology (used for fast computation).
+ * @param[in] rendering_parameters Rendering (pose) parameters of the mesh.
+ * @param[in] image_edges A list of points that are edges.
+ * @param[in] distance_threshold All correspondences below this threshold.
+ * @return A pair consisting of the used image edge points and their associated 3D vertex index.
+ */
+inline std::pair<std::vector<cv::Vec2f>, std::vector<int>> find_occluding_edge_correspondences_parallel(const core::Mesh& mesh, const morphablemodel::EdgeTopology& edge_topology, const fitting::RenderingParameters& rendering_parameters, const std::vector<Eigen::Vector2f>& image_edges, float distance_threshold = 64.0f)
+{
+	assert(rendering_parameters.get_camera_type() == fitting::CameraType::Orthographic);
+	using std::vector;
+	using Eigen::Vector2f;
+
+	// Compute vertices that lye on occluding boundaries:
+	auto occluding_vertices = occluding_boundary_vertices_parallel(mesh, edge_topology, glm::mat4x4(rendering_parameters.get_rotation()));
+
+	// Project these occluding boundary vertices from 3D to 2D:
+	vector<Vector2f> model_edges_projected;
+	for (const auto& v : occluding_vertices)
+	{
+		auto p = glm::project({ mesh.vertices[v][0], mesh.vertices[v][1], mesh.vertices[v][2] }, rendering_parameters.get_modelview(), rendering_parameters.get_projection(), fitting::get_opencv_viewport(rendering_parameters.get_screen_width(), rendering_parameters.get_screen_height()));
+		model_edges_projected.push_back({ p.x, p.y });
+	}
+
+	// Find edge correspondences:
+	// Build a kd-tree and use nearest neighbour search:
+	using kd_tree_t = KDTreeVectorOfVectorsAdaptor<vector<Vector2f>, float, 2>;
+	kd_tree_t tree(2, image_edges); // dim, samples, max_leaf
+	tree.index->buildIndex();
+
+	vector<std::pair<std::size_t, double>> idx_d; // will contain [ index to the 2D edge in 'image_edges', distance (L2^2) ]
+	for (const auto& e : model_edges_projected)
+	{
+		std::size_t idx; // contains the indices into the original 'image_edges' vector
+		double dist_sq; // squared distances
+		nanoflann::KNNResultSet<double> resultSet(1);
+		resultSet.init(&idx, &dist_sq);
+		tree.index->findNeighbors(resultSet, e.data(), nanoflann::SearchParams(10));
+		idx_d.push_back({ idx, dist_sq });
+	}
+	// Filter edge matches:
+	// We filter below by discarding all correspondence that are a certain distance apart.
+	// We could also (or in addition to) discard the worst 5% of the distances or something like that.
+
+	// Filter and store the image (edge) points with their corresponding vertex id:
+	vector<int> vertex_indices;
+	vector<cv::Vec2f> image_points;
+	assert(occluding_vertices.size() == idx_d.size());
+	for (int i = 0; i < occluding_vertices.size(); ++i)
+	{
+		auto ortho_scale = rendering_parameters.get_screen_width() / rendering_parameters.get_frustum().r; // This might be a bit of a hack - we recover the "real" scaling from the SOP estimate
+		if (idx_d[i].second <= distance_threshold * ortho_scale) // I think multiplying by the scale is good here and gives us invariance w.r.t. the image resolution and face size.
+		{
+			auto edge_point = image_edges[idx_d[i].first];
+			// Store the found 2D edge point, and the associated vertex id:
+			vertex_indices.push_back(occluding_vertices[i]);
+			image_points.push_back(cv::Vec2f(edge_point[0], edge_point[1]));
+		}
+	}
+	return { image_points, vertex_indices };
+};
+
+
 
 	} /* namespace fitting */
 } /* namespace eos */

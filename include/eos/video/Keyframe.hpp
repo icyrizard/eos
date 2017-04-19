@@ -228,6 +228,33 @@ public:
 	};
 
 	/**
+	 *
+	 * @param frame
+	 * @param landmarks
+	 * @return
+	 */
+	bool has_eyes_open(cv::Mat frame, core::LandmarkCollection<Vec2f> landmarks) {
+		std::vector<cv::Vec2f> right_eye;
+		std::vector<cv::Vec2f> left_eye;
+
+		for(auto &&lm: landmarks) {
+			int landmark_index = std::stoi(lm.name);
+			if(landmark_index >= 37 && landmark_index <= 42) {
+				right_eye.push_back(lm.coordinates);
+			}
+
+			if(landmark_index >= 43 && landmark_index <= 48) {
+				left_eye.push_back(lm.coordinates);
+			}
+		}
+
+		cv::Rect right_box = cv::boundingRect(right_eye);
+		cv::Rect left_box = cv::boundingRect(left_eye);
+
+		return true;
+	}
+
+	/**
 	 * @brief Merges the given new isomap with all previously processed isomaps.
 	 *
 	 * @param[in] isomap The new isomap to add.

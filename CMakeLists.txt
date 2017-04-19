@@ -113,8 +113,17 @@ set(HEADERS
   ${CMAKE_CURRENT_SOURCE_DIR}/include/eos/video/Keyframe.hpp
 )
 
+find_package(OpenMP)
+if (OPENMP_FOUND)
+  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
+  set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+endif()
+
+message(STATUS ${OpenMP_CXX_FLAGS})
+message(STATUS ${OpenMP_INCLUDE_DIR})
 add_library(eos INTERFACE)
 target_compile_features(eos INTERFACE ${EOS_CXX_COMPILE_FEATURES})
+
 # Add header includes:
 target_include_directories(eos INTERFACE "include")
 target_include_directories(eos INTERFACE ${CEREAL_INCLUDE_DIR})
@@ -124,6 +133,7 @@ target_include_directories(eos INTERFACE ${EIGEN3_INCLUDE_DIR})
 target_include_directories(eos INTERFACE ${glm_INCLUDE_DIR})
 target_include_directories(eos INTERFACE ${nanoflann_INCLUDE_DIR})
 target_include_directories(eos INTERFACE ${eigen3_nnls_INCLUDE_DIR})
+
 
 # Custom target for the library, to make the headers show up in IDEs:
 add_custom_target(eos-headers SOURCES ${HEADERS})

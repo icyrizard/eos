@@ -8,7 +8,7 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/opencv.hpp"
 
-#include "eos/morphablemodel/morphablemodel.hpp"
+#include "eos/morphablemodel/MorphableModel.hpp"
 #include "eos/core/LandmarkMapper.hpp"
 #include "eos/core/Landmark.hpp"
 
@@ -256,15 +256,13 @@ namespace eos {
 		 * @param[in,out] image_points
 		 */
 		template <typename vec2f, typename vec4f>
-		inline void get_landmark_coordinates(core::LandmarkCollection<vec2f> landmarks,
-										const core::LandmarkMapper& landmark_mapper,
-										eos::core::Mesh& mesh,
-										vector<vector<vec4f>>& model_points,
-										vector<vector<int>>& vertex_indices,
-										vector<vector<vec2f>>& image_points) {
-			vector<vec4f> current_model_points;
-			vector<int> current_vertex_indices;
-			vector<vec2f> current_image_points;
+		std::tuple<vector<vec4f>, vector<int>, vector<vec2f>> get_landmark_coordinates(
+				core::LandmarkCollection<vec2f> landmarks,
+				const core::LandmarkMapper& landmark_mapper,
+				eos::core::Mesh& mesh) {
+			vector<vec4f> model_points;
+			vector<int> vertex_indices;
+			vector<vec2f> image_points;
 
 			for (auto &lm: landmarks) {
 				auto converted_name = landmark_mapper.convert(lm.name);
@@ -280,15 +278,62 @@ namespace eos {
 					mesh.vertices[vertex_idx].w
 				);
 
-				current_model_points.emplace_back(vertex);
-				current_vertex_indices.emplace_back(vertex_idx);
-				current_image_points.emplace_back(lm.coordinates);
+				model_points.emplace_back(vertex);
+				vertex_indices.emplace_back(vertex_idx);
+				image_points.emplace_back(lm.coordinates);
 			}
 
-			model_points.push_back(current_model_points);
-			vertex_indices.push_back(current_vertex_indices);
-			image_points.push_back(current_image_points);
+			return std::make_tuple(model_points, vertex_indices, image_points);
 		}
+
+
+	/**
+ *
+ * Get the mesh coordinates, given a set of landmarks.
+ *
+ * @tparam vec2f
+ * @tparam vec4f
+ * @param[in] landmarks
+ * @param[in] landmark_mapper
+ * @param[in] mesh
+ * @param[in,out] model_points
+ * @param[in,out] vertex_indices
+ * @param[in,out] image_points
+ */
+	template <typename vec2f, typename vec4f>
+	inline void get_landmark_coordinates_inline(core::LandmarkCollection<vec2f> landmarks,
+										 const core::LandmarkMapper& landmark_mapper,
+										 eos::core::Mesh& mesh,
+										 vector<vector<vec4f>>& model_points,
+										 vector<vector<int>>& vertex_indices,
+										 vector<vector<vec2f>>& image_points) {
+		vector<vec4f> current_model_points;
+		vector<int> current_vertex_indices;
+		vector<vec2f> current_image_points;
+
+		for (auto &lm: landmarks) {
+			auto converted_name = landmark_mapper.convert(lm.name);
+			if (!converted_name) { // no mapping defined for the current landmark
+				continue;
+			}
+
+			int vertex_idx = std::stoi(converted_name.get());
+			Vec4f vertex(
+				mesh.vertices[vertex_idx].x,
+				mesh.vertices[vertex_idx].y,
+				mesh.vertices[vertex_idx].z,
+				mesh.vertices[vertex_idx].w
+			);
+
+			current_model_points.emplace_back(vertex);
+			current_vertex_indices.emplace_back(vertex_idx);
+			current_image_points.emplace_back(lm.coordinates);
+		}
+
+		model_points.push_back(current_model_points);
+		vertex_indices.push_back(current_vertex_indices);
+		image_points.push_back(current_image_points);
+	}
 	}
 }
 

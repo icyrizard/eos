@@ -18,8 +18,8 @@
  */
 #include "eos/core/landmark_utils.hpp"
 #include "eos/render/render.hpp"
-#include "eos/morphablemodel/morphablemodel.hpp"
-#include "eos/morphablemodel/blendshape.hpp"
+#include "eos/morphablemodel/MorphableModel.hpp"
+#include "eos/morphablemodel/Blendshape.hpp"
 #include "eos/fitting/fitting.hpp"
 #include "eos/render/utils.hpp"
 #include "eos/render/texture_extraction.hpp"
@@ -213,9 +213,6 @@ void render_output(
 		cv::imwrite("/tmp/eos/" +
 			std::to_string(frame_number) + "_" + std::to_string(yaw_angle) + ".png", frame);
 
-		int frame_width = frame.cols;
-		int frame_height = frame.rows;
-
 		// Extract the texture using the fitted mesh from this frame:
 		Mat affine_cam = fitting::get_3x4_affine_camera_matrix(rendering_paramss[i], frame.cols, frame.rows);
 		Mat isomap = render::extract_texture(
@@ -366,22 +363,28 @@ void evaluate_results(
 		Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(
 			rendering_params, frame_width, frame_height);
 
-//		for (auto &&lm : landmarks) {
-//			cv::rectangle(
-//					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-//					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
-//			);
-//		}
-//		// Draw the fitted mesh as wireframe, and save the image:
-//		draw_wireframe(
-//				outimg,
-//				meshs[i],
-//				rendering_params.get_modelview(),
-//				rendering_params.get_projection(),
-//				fitting::get_opencv_viewport(frame_width, frame_height));
-//
+		for (auto &&lm : landmarks) {
+			cv::rectangle(
+					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
+					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
+			);
+		}
+		// Draw the fitted mesh as wireframe, and save the image:
+		draw_wireframe(
+				outimg,
+				meshs[i],
+				rendering_params.get_modelview(),
+				rendering_params.get_projection(),
+				fitting::get_opencv_viewport(frame_width, frame_height));
+
+		bool eyes_open = isomap_averaging.has_eyes_open(frame, landmarks);
+
+		if (!eyes_open) {
+			continue;
+		}
+
 //		cv::imshow("Img", outimg);
-//		cv::waitKey(1);
+//		cv::waitKey(0);
 
 		// Draw the loaded landmarks:
 		Mat isomap = render::extract_texture(meshs[i], affine_from_ortho, frame);
@@ -660,7 +663,8 @@ int main(int argc, char *argv[]) {
 		if (vid_iterator.has_changed()) {
 			std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
 			// Fit shape and pose:
-			std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_2(
+			auto t1 = std::chrono::high_resolution_clock::now();
+			std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_parallel(
 				morphable_model,
 				blendshapes,
 				key_frames,
@@ -679,6 +683,12 @@ int main(int argc, char *argv[]) {
 				blendshape_coefficients,
 				fitted_image_points
 			);
+
+			auto t2 = std::chrono::high_resolution_clock::now();
+			std::cout << "Reconstruction took "
+					  << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count()
+					  << "ms, mean(" << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() / key_frames.size()
+					  << "ms)" << std::endl;
 
 			vid_iterator.update_reconstruction_coeff(pca_shape_coefficients);
 

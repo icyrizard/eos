@@ -93,40 +93,44 @@ public:
 	// TODO: build support for setting the amount of max_frames in the buffer.
 	BufferedVideoIterator(std::string videoFilePath, fitting::ReconstructionData reconstruction_data, boost::property_tree::ptree settings) {
 		std::ifstream file(videoFilePath);
-		std::cout << "video file path: " << videoFilePath << std::endl;
+		std::cout << "Opening video: " << videoFilePath << std::endl;
 
 		if (!file.is_open()) {
 			throw std::runtime_error("Error opening given file: " + videoFilePath);
 		}
 
 		cv::VideoCapture tmp_cap(videoFilePath); // open video file
-		if (!tmp_cap.isOpened()) { // check if we succeeded
+		if (!tmp_cap.isOpened()) {
 			throw std::runtime_error("Could not play video");
 		}
 
-		this->cap = tmp_cap;
-
-		// copy settings from gathered from a .ini file
-		this->min_frames = settings.get<int>("video.min_frames", 5);
-		this->drop_frames = settings.get<int>("video.drop_frames", 0);
-		this->skip_frames = settings.get<int>("video.skip_frames", 0);
-		this->frames_per_bin = settings.get<unsigned int>("video.frames_per_bin", 2);
-		this->num_shape_coefficients_to_fit = settings.get<unsigned int>("video.num_shape_coefficients_to_fit", 50);
+		cap = tmp_cap;
 
 		this->reconstruction_data = reconstruction_data;
 
+		// copy settings from gathered from a .ini file
+		min_frames = settings.get<int>("video.min_frames", 5);
+		drop_frames = settings.get<int>("video.drop_frames", 0);
+		skip_frames = settings.get<int>("video.skip_frames", 0);
+		frames_per_bin = settings.get<unsigned int>("video.frames_per_bin", 2);
+
+		unsigned int num_shape_coeff = reconstruction_data.morphable_model.get_shape_model().get_num_principal_components();
+
+		this->num_shape_coefficients_to_fit = settings.get<unsigned int>(
+			"video.num_shape_coefficients_to_fit", num_shape_coeff);
+
 		// initialize bins
-		this->bins.resize(num_yaw_bins);
+		bins.resize(num_yaw_bins);
 
-		// reset all
-		this->n_frames = 0;
-		this->total_frames = 0;
+		// reset frame count
+		n_frames = 0;
+		total_frames = 0;
 
-		std::cout << "Buffered video iter: "
+		std::cout << "Settings: " << std::endl <<
 			"min_frames: " << min_frames << std::endl <<
-				  "drop_frames: " << drop_frames << std::endl <<
-				  "frames_per_bin: " << frames_per_bin << std::endl <<
-				  "num_shape_coefficients_to_fit: " <<  num_shape_coefficients_to_fit << std::endl;
+		    "drop_frames: " << drop_frames << std::endl <<
+		    "frames_per_bin: " << frames_per_bin << std::endl <<
+		    "num_shape_coefficients_to_fit: " << num_shape_coefficients_to_fit << std::endl;
 
 		std::cout << "total frames in video: " << cap.get(CV_CAP_PROP_FRAME_COUNT) << std::endl;
 	}
@@ -136,9 +140,11 @@ public:
 	}
 
 	/**
+	 * Generate a new keyframe containing information about pose and landmarks
+	 * These are needed to determine if we want the image in the first place.
 	 *
 	 * @param frame
-	 * @return
+	 * @return Keyframe
 	 */
 	Keyframe generate_new_keyframe(cv::Mat frame) {
 		int frame_height = frame.rows;
@@ -153,6 +159,7 @@ public:
 			return Keyframe();
 		}
 
+		// Get the necessary information for reconstruction.
 		auto landmarks = reconstruction_data.landmark_list[total_frames];
 		auto landmark_mapper = reconstruction_data.landmark_mapper;
 		auto blendshapes = reconstruction_data.blendshapes;
@@ -161,10 +168,6 @@ public:
 		vector<cv::Vec4f> model_points;
 		vector<int> vertex_indices;
 		vector<cv::Vec2f> image_points;
-
-		if (num_shape_coefficients_to_fit == 0) {
-			num_shape_coefficients_to_fit = morphable_model.get_shape_model().get_num_principal_components();
-		}
 
 		// make a new one
 		std::vector<float> blend_shape_coefficients;
@@ -193,16 +196,6 @@ public:
 		fitting_result.rendering_parameters = rendering_params;
 		fitting_result.landmarks = landmarks;
 
-//		std::cout << face_roi << " ("<< frame_width << "," << frame_height << ")" << std::endl;
-//		for (auto &&lm : landmarks) {
-//			cv::rectangle(
-//					frame, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-//					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
-//			);
-//		}
-//
-//		cv::imshow("frame", frame);
-//		cv::waitKey(0);
 		cv::Rect face_roi = core::get_face_roi(image_points, frame_width, frame_height);
 
 		float frame_laplacian_score = static_cast<float>(variance_of_laplacian(frame(face_roi)));
@@ -359,7 +352,7 @@ public:
 
 			// Setting that the buffer has changed:
 			frame_buffer_changed = true;
-			std::cout << "frame added(" << n_frames << "): " << keyframe.score << ", " << keyframe.yaw_angle << std::endl;
+			std::cout << "frame added(" << total_frames << "): " << keyframe.score << ", " << keyframe.yaw_angle << std::endl;
 		}
 
 		total_frames++;
@@ -384,8 +377,14 @@ public:
 		this->pca_shape_coefficients = pca_shape_coefficients;
 	}
 
-	// Converts a given yaw angle to an index in the internal bins vector.
-	// Assumes 9 bins and 20� intervals.
+	/**
+	 *
+	 * Converts a given yaw angle to an index in the internal bins vector.
+	 * Assumes 9 bins and 20� intervals.
+	 *
+	 * @param yaw_angle
+	 * @return
+	 */
 	static std::size_t angle_to_index(float yaw_angle)
 	{
 		if (yaw_angle <= -70.f)
@@ -436,15 +435,14 @@ public:
 
 
 	// todo: move to private if possible.
+	/**
+	 * Stop by releasing the VideoCapture.
+	 */
 	void __stop() {
 		cap.release();
 	};
 
 private:
-	int num_yaw_bins = 9;
-	unsigned int frames_per_bin;
-	bool frame_buffer_changed = false;
-
 	cv::VideoCapture cap;
 	std::deque<Keyframe> frame_buffer;
 	eos::fitting::ReconstructionData reconstruction_data;
@@ -454,6 +452,10 @@ private:
 
 	// latest pca_shape_coefficients
 	std::vector<float> pca_shape_coefficients;
+
+	std::size_t num_yaw_bins = 9;
+	bool frame_buffer_changed = false;
+	unsigned int frames_per_bin;
 
 	// TODO: make set-able
 	// total frames in processed, not persee in buffer (skipped frames)
@@ -472,9 +474,6 @@ private:
 	int drop_frames = 0;
 
 	unsigned int num_shape_coefficients_to_fit = 0;
-
-	// laplacian threshold
-//	double laplacian_threshold = 10000000;
 };
 
 }
