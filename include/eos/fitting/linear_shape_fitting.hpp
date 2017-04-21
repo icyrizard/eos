@@ -315,8 +315,8 @@ inline std::vector<float> fit_shape_to_landmarks_linear_multi_parallel(
 #pragma omp parallel num_threads(num_threads)
 		{
 #pragma omp for
-			for (int i = 0; i < num_landmarks; ++i)
-			{
+			for (int i = 0; i < num_landmarks; ++i) {
+				// calculate index from landmark offset (not always the same landmarks amount).
 				int index = (landmark_offset_index[k] * 4) + 4 * i;
 				int offset = landmark_offset_index[k] + i;
 				auto vertex_id = vertex_ids[k][i];
@@ -328,16 +328,14 @@ inline std::vector<float> fit_shape_to_landmarks_linear_multi_parallel(
 					basis_rows_.block(0, 0, basis_rows_.rows(), num_coeffs_to_fit);
 
 				// Set y with landmark coordinates (will be used in linear lsq later)
-#pragma omp simd
-				for (int j = 0; j < 2; j++)
-				{
+				#pragma omp simd
+				for (int j = 0; j < 2; j++) {
 					y(3 * offset + j) = landmarks[k][i][j];
 				}
 
 				// Set v_bar with face mesh (will be used in linear lsq later)
-#pragma omp simd
-				for (int j = 0; j < 3; j++)
-				{
+				#pragma omp simd
+				for (int j = 0; j < 3; j++) {
 					v_bar(4 * offset + j) = base_face[k](vertex_id * 3 + j);
 				}
 			}
@@ -368,13 +366,13 @@ inline std::vector<float> fit_shape_to_landmarks_linear_multi_parallel(
 
 	auto t2 = std::chrono::high_resolution_clock::now();
 
-	t1 = std::chrono::high_resolution_clock::now();
 	// fill P with coefficients
 	P.setFromTriplets(P_coefficients.begin(), P_coefficients.end());
 	MatrixXf one;
 	MatrixXf two;
 	MatrixXf A;
 	MatrixXf b;
+	MatrixXf rhs;
 
 #pragma omp parallel sections num_threads(2)
 {
@@ -382,6 +380,7 @@ inline std::vector<float> fit_shape_to_landmarks_linear_multi_parallel(
 {
 	A = P * V_hat_h; // camera matrix times the basis
 	one = A.transpose() * Omega.asDiagonal();
+	rhs = -one * b; // It's -A^t*Omega^t*b, but we don't need to transpose Omega, since it's a diagonal matrix, and Omega^t = Omega.
 }
 
 #pragma omp section
@@ -392,11 +391,7 @@ inline std::vector<float> fit_shape_to_landmarks_linear_multi_parallel(
 }
 
 	const MatrixXf AtOmegaAReg = one * A + two;
-	const MatrixXf rhs = -one * b; // It's -A^t*Omega^t*b, but we don't need to transpose Omega, since it's a diagonal matrix, and Omega^t = Omega.
 	const VectorXf c_s = AtOmegaAReg.colPivHouseholderQr().solve(rhs);
-
-	t2 = std::chrono::high_resolution_clock::now();
-	std::cout << "matrix xf " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << "ms" << std::endl;
 
 	return std::vector<float>(c_s.data(), c_s.data() + c_s.size());
 };

@@ -42,9 +42,10 @@ namespace eos {
 struct FittingResult
 {
 	RenderingParameters rendering_parameters;
-	core::LandmarkCollection<cv::Vec2f> landmarks;
 	std::vector<float> pca_shape_coefficients;
 	std::vector<float> blendshape_coefficients;
+	core::LandmarkCollection<cv::Vec2f> landmarks;
+	core::Mesh mesh;
 };
 
 	} /* namespace fitting */

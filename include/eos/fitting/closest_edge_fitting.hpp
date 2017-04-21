@@ -45,6 +45,7 @@
 #include <utility>
 #include <cstddef>
 
+
 namespace eos {
 namespace fitting {
 
@@ -391,7 +392,11 @@ inline std::pair<std::vector<cv::Vec2f>, std::vector<int>> find_occluding_edge_c
 	}
 	return { image_points, vertex_indices };
 };
+
+#ifdef _OPENMP
 /**
+ * OpenMP version
+ *
  * @brief Computes the vertices that lie on occluding boundaries, given a particular pose.
  *
  * This algorithm computes the edges that lie on occluding boundaries of the mesh.
@@ -404,7 +409,7 @@ inline std::pair<std::vector<cv::Vec2f>, std::vector<int>> find_occluding_edge_c
  * @param[in] R The rotation (pose) under which the occluding boundaries should be computed.
  * @return A vector with unique vertex id's making up the edges.
  */
-inline std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& mesh, const morphablemodel::EdgeTopology& edge_topology, glm::mat4x4 R)
+std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& mesh, const morphablemodel::EdgeTopology& edge_topology, glm::mat4x4 R)
 {
 	// Rotate the mesh:
 	std::vector<glm::vec4> rotated_vertices;
@@ -423,7 +428,8 @@ inline std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& m
 
 	// Find occluding edges:
 	std::vector<int> occluding_edges_indices;
-	for (int edge_idx = 0; edge_idx < edge_topology.adjacent_faces.size(); ++edge_idx) // For each edge... Ef contains the indices of the two adjacent faces
+	for (int edge_idx = 0; edge_idx < edge_topology.adjacent_faces.size();
+		 ++edge_idx) // For each edge... Ef contains the indices of the two adjacent faces
 	{
 		const auto &edge = edge_topology.adjacent_faces[edge_idx];
 		if (edge[0] == 0) // ==> NOTE/Todo Need to change this if we use 0-based indexing!
@@ -455,65 +461,81 @@ inline std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& m
 	// Remove duplicate vertex id's (std::unique works only on sorted sequences):
 	std::sort(begin(occluding_vertices), end(occluding_vertices));
 	occluding_vertices.erase(std::unique(begin(occluding_vertices), end(occluding_vertices)), end(occluding_vertices));
-
 	// Perform ray-casting to find out which vertices are not visible (i.e. self-occluded):
-	std::vector<bool> visibility;
+	// Use map to allow parallelism, all vertex_ids are unique
+	std::vector<int> vertex_id_visible_map(occluding_vertices.size());
 
-	int NUM_THREADS = 4;
 	auto t1 = std::chrono::high_resolution_clock::now();
-
-	 // we shoot the ray from the vertex towards the camera
-	glm::vec3 ray_direction(0.0f, 0.0f, 1.0f);
-
-#pragma omp parallel for schedule num_threads(NUM_THREADS)
-		for(int i = 0; i < occluding_vertices.size(); i++) {
+//	#pragma omp target map(to: occluding_vertices, mesh, rotated_vertices)
+//	#pragma omp parallel for
+#pragma omp target map(alloc:vertex_id_visible_map) map(from:occluding_vertices, rotated_vertices, mesh)
+	{
+#pragma omp parallel for
+		for (int i = 0; i < occluding_vertices.size(); i++) {
 			const auto vertex_idx = occluding_vertices[i];
-			bool visible = true;
+			int visible = 1;
 
 			glm::vec3 ray_origin(rotated_vertices[vertex_idx]);
+			// we shoot the ray from the vertex towards the camera
+			glm::vec3 ray_direction(0.0f, 0.0f, 1.0f);
 
 			// For every tri of the rotated mesh:
-			for(int j = 0; j < mesh.tvi.size(); j++) {
+			for (int j = 0; j < mesh.tvi.size(); j++) {
 				auto tri = mesh.tvi[j];
 				auto &v0 = rotated_vertices[tri[0]];
 				auto &v1 = rotated_vertices[tri[1]];
 				auto &v2 = rotated_vertices[tri[2]];
 
-				auto intersect = ray_triangle_intersect(ray_origin, ray_direction, glm::vec3(v0), glm::vec3(v1), glm::vec3(v2), false);
+				auto intersect = ray_triangle_intersect(ray_origin,
+														ray_direction,
+														glm::vec3(v0),
+														glm::vec3(v1),
+														glm::vec3(v2),
+														false);
 
 				// first is bool intersect, second is the distance t
 				if (intersect.first == true) {
 					// We've hit a triangle. Ray hit its own triangle. If it's behind the ray origin, ignore the intersection:
 					// Check if in front or behind?
-					if (intersect.second.get() <= 1e-4)
-					{
+					if (intersect.second.get() <= 1e-4) {
 						continue; // the intersection is behind the vertex, we don't care about it
 					}
 					// Otherwise, we've hit a genuine triangle, and the vertex is not visible:
-					visible = false;
+					visible = 0;
 					break;
 				}
 			}
 
-			visibility.push_back(visible);
-		}
-
-	auto t2 = std::chrono::high_resolution_clock::now();
-	std::cout << "test derp 1: " << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms" << std::endl;
-
-	// Remove vertices from occluding boundary list that are not visible:
-	std::vector<int> final_vertex_ids;
-	for (int i = 0; i < occluding_vertices.size(); ++i)
-	{
-		if (visibility[i] == true)
-		{
-			final_vertex_ids.push_back(occluding_vertices[i]);
+			vertex_id_visible_map[i] = visible;
 		}
 	}
+
+	auto t2 = std::chrono::high_resolution_clock::now();
+
+	// copy the results to final vertex ids
+	std::vector<int> final_vertex_ids;
+	for (int i = 0; i < occluding_vertices.size(); ++i) {
+		const auto vertex_idx = occluding_vertices[i];
+		int visible = vertex_id_visible_map[i];
+		if (visible == 1) {
+			final_vertex_ids.push_back(vertex_idx);
+		}
+	}
+
+	auto final_timing = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
+	printf("S %lu %lld ms (mean: %f)\n",
+		   final_vertex_ids.size(),
+		   final_timing,
+		   static_cast<float>(final_timing) / final_vertex_ids.size()
+	);
+
 	return final_vertex_ids;
 };
 
 /**
+ *
+ * OpenMP version
+ *
  * @brief For a given list of 2D edge points, find corresponding 3D vertex IDs.
  *
  * This algorithm first computes the 3D mesh's occluding boundary vertices under
@@ -593,6 +615,7 @@ inline std::pair<std::vector<cv::Vec2f>, std::vector<int>> find_occluding_edge_c
 	}
 	return { image_points, vertex_indices };
 };
+#endif // _OPENMP
 
 
 

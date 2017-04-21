@@ -48,6 +48,7 @@ using eos::core::Landmark;
 using eos::core::LandmarkCollection;
 using eos::video::BufferedVideoIterator;
 using eos::video::WeightedIsomapAveraging;
+using eos::video::ReconstructionVideoWriter;
 using cv::Mat;
 using cv::Vec2f;
 using cv::Vec3f;
@@ -192,8 +193,13 @@ void render_output(
 		boost::property_tree::ptree settings,
 		int n_iter) {
 
+	std::string output_path = settings.get<std::string>("output.output_path", "/tmp");
+	float merge_isomap_face_angle = settings.get<float>("output.merge_isomap_face_angle", 60.f);
+	bool make_video = settings.get<bool>("output.save_video", false);
+	bool show_video = settings.get<bool>("output.show_video", false);
+
 	Mat merged_isomap;
-	WeightedIsomapAveraging isomap_averaging(60.f); // merge all triangles that are facing <60° towards the camera
+	WeightedIsomapAveraging isomap_averaging(merge_isomap_face_angle); // merge all triangles that are facing <60° towards the camera
 	eos::video::PcaCoefficientMerging pca_shape_merging;
 
 	auto landmark_mapper = reconstruction_data.landmark_mapper;
@@ -208,10 +214,9 @@ void render_output(
 
 		auto unmodified_frame = frame.clone();
 		int frame_number = key_frames[i].frame_number;
-		float yaw_angle = glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
+		float yaw_angle = key_frames[i].yaw_angle;// glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
 
-		cv::imwrite("/tmp/eos/" +
-			std::to_string(frame_number) + "_" + std::to_string(yaw_angle) + ".png", frame);
+		cv::imwrite("/tmp/eos/" + std::to_string(frame_number) + "_" + std::to_string(yaw_angle) + ".png", frame);
 
 		// Extract the texture using the fitted mesh from this frame:
 		Mat affine_cam = fitting::get_3x4_affine_camera_matrix(rendering_paramss[i], frame.cols, frame.rows);
@@ -302,8 +307,20 @@ void render_output(
 			false,
 			rendering);
 
-	cv::imshow("render", rendering);
-	cv::waitKey(10);
+//	if(save_video) {
+//		cv::imshow("render", rendering);
+//		cv::waitKey(1);
+//	}
+//
+//	if(show_video) {
+//		cv::imshow("render", rendering);
+//		cv::waitKey(1);
+//	}
+//
+//	eos::video::ReconstructionVideoWriter outputVideo;
+//	Size S = Size((int) inputVideo.get(CV_CAP_PROP_FRAME_WIDTH),    //Acquire input size
+//				  (int) inputVideo.get(CV_CAP_PROP_FRAME_HEIGHT));
+//	outputVideo.open(NAME , ex, inputVideo.get(CV_CAP_PROP_FPS),S, true);
 }
 
 /**
@@ -334,8 +351,10 @@ void evaluate_results(
 		boost::property_tree::ptree settings,
 		int n_iter) {
 
-	WeightedIsomapAveraging isomap_averaging(10.f); // merge all triangles that are facing <60° towards the camera
+	std::string output_path = settings.get<std::string>("output.output_path", "/tmp");
+	float merge_isomap_face_angle = settings.get<float>("output.merge_isomap_face_angle", 60.f);
 
+	WeightedIsomapAveraging isomap_averaging(merge_isomap_face_angle); // merge all triangles that are facing <60° towards the camera
 	Mat merged_isomap;
 	fs::path outputfilebase = annotations[0];
 
@@ -377,11 +396,11 @@ void evaluate_results(
 				rendering_params.get_projection(),
 				fitting::get_opencv_viewport(frame_width, frame_height));
 
-		bool eyes_open = isomap_averaging.has_eyes_open(frame, landmarks);
-
-		if (!eyes_open) {
-			continue;
-		}
+//		bool eyes_open = isomap_averaging.has_eyes_open(frame, landmarks);
+//
+//		if (!eyes_open) {
+//			continue;
+//		}
 
 //		cv::imshow("Img", outimg);
 //		cv::waitKey(0);
@@ -649,19 +668,21 @@ int main(int argc, char *argv[]) {
 
 	// Start getting video frames:
 	vid_iterator.start();
+//	vid_writer.start();
 
 	// Count the amount of iterations:
 	int n_iter = 0;
+
 	while(vid_iterator.is_playing()) {
 		auto key_frames = vid_iterator.get_keyframes();
 
 		// Generate a sublist of the total available landmark list:
 		auto landmark_sublist = sample_landmarks(key_frames, landmark_list);
-//		std::cout << vid_iterator.to_string() << std::endl;
 
 		// it makes no sense to update pca_coeff if nothing in the buffer has changed:
 		if (vid_iterator.has_changed()) {
 			std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
+
 			// Fit shape and pose:
 			auto t1 = std::chrono::high_resolution_clock::now();
 			std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_parallel(
@@ -681,7 +702,8 @@ int main(int argc, char *argv[]) {
 				boost::none,
 				pca_shape_coefficients,
 				blendshape_coefficients,
-				fitted_image_points
+				fitted_image_points,
+				settings
 			);
 
 			auto t2 = std::chrono::high_resolution_clock::now();
@@ -690,62 +712,62 @@ int main(int argc, char *argv[]) {
 					  << "ms, mean(" << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() / key_frames.size()
 					  << "ms)" << std::endl;
 
-			vid_iterator.update_reconstruction_coeff(pca_shape_coefficients);
 
-			evaluate_results(
-				key_frames,
-				rendering_paramss,
-				meshs,
-				pca_shape_coefficients,
-				blendshape_coefficients,
-				fitted_image_points,
-				annotations,
-				reconstruction_data,
-				settings,
-				n_iter
-			);
-
-		} else {
-			std::cout << "No reconstruction - buffer did not change" << std::endl;
-		}
-
-//		// Render output:
-//		render_output(
+//			evaluate_results(
 //				key_frames,
 //				rendering_paramss,
-//				landmark_sublist,
 //				meshs,
 //				pca_shape_coefficients,
 //				blendshape_coefficients,
 //				fitted_image_points,
 //				annotations,
 //				reconstruction_data,
-//				vid_iterator.last_frame,
-//				vid_iterator.last_frame_number,
 //				settings,
 //				n_iter
-//		);
+//			);
 
+		} else {
+//			std::cout << "No reconstruction - buffer did not change" << std::endl;
+		}
 
 		// Get new frames:
 		n_iter++;
 	}
 
-	auto key_frames = vid_iterator.get_keyframes();
+//	vid_writer.__stop();
+	if(settings.get<bool>("output.make_video", false)) {
+		ReconstructionVideoWriter vid_writer;
+		try {
+			vid_writer = ReconstructionVideoWriter(videofile.string(), reconstruction_data, settings);
+		} catch(std::runtime_error &e) {
+			std::cout << e.what() << std::endl;
+			return EXIT_FAILURE;
+		}
+		// Render output:
+		std::cout << "Waiting for video to be completed..." << std::endl;
+		vid_writer.update_reconstruction_coeff(pca_shape_coefficients);
 
-	std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
-	evaluate_results(
-		key_frames,
-		rendering_paramss,
-		meshs,
-		pca_shape_coefficients,
-		blendshape_coefficients,
-		fitted_image_points,
-		annotations,
-		reconstruction_data,
-		settings,
-		n_iter
-	);
+		while (vid_writer.next()) {
+			printf("%d/%d\r", vid_writer.get_frame_number(), vid_iterator.get_frame_number());
+		}
+
+	}
+
+//	auto key_frames = vid_iterator.get_keyframes();
+//	std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
+//
+//	evaluate_results(
+//		key_frames,
+//		rendering_paramss,
+//		meshs,
+//		pca_shape_coefficients,
+//		blendshape_coefficients,
+//		fitted_image_points,
+//		annotations,
+//		reconstruction_data,
+//		settings,
+//		n_iter
+//	);
 
 	//todo: we could build our final obj here?
 

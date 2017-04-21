@@ -35,6 +35,8 @@
 #include <atomic>
 #include <unistd.h>
 
+#include <glm/gtx/rotate_vector.hpp>
+
 using cv::Mat;
 using cv::Vec2f;
 using cv::Vec3f;
@@ -49,6 +51,8 @@ using namespace std;
 namespace eos {
 	namespace video {
 		// TODO: maybe move video iterator here.. or remove fil.
+
+
 /**
  * @brief Computes the variance of laplacian of the given image or patch.
  *
@@ -71,6 +75,374 @@ double variance_of_laplacian(const cv::Mat& image)
 	return focus_measure;
 };
 
+class ReconstructionVideoWriter
+{
+public:
+
+	std::unique_ptr<std::thread> frame_buffer_worker;
+	boost::property_tree::ptree settings;
+
+	ReconstructionVideoWriter() {};
+
+	ReconstructionVideoWriter(std::string video_file,
+							  fitting::ReconstructionData reconstruction_data,
+							  boost::property_tree::ptree settings) {
+
+		// make available in settings, would be a bit difficult to parse, but not impossible ofc.
+		int codec = CV_FOURCC('a','v','c','1');
+		fs::path output_file_path = settings.get<fs::path>("output.file_path", "/tmp/video.mp4");
+
+		// Remove output video file if exists, OpenCV does not overwrite by default so will stop if we don't do this.
+		if(fs::exists(output_file_path)) {
+			fs::remove(output_file_path);
+		}
+
+		fps = settings.get<int>("output.fps", 30);
+		show_video = settings.get<bool>("output.show_video", false);
+		wireframe = settings.get<bool>("output.wireframe", false);
+		landmarks = settings.get<bool>("output.landmarks", false);
+
+		float merge_isomap_face_angle = settings.get<float>("output.merge_isomap_face_angle", 60.f);
+		WeightedIsomapAveraging isomap_averaging(merge_isomap_face_angle);
+
+		unsigned int num_shape_coeff = reconstruction_data.
+			morphable_model.get_shape_model().get_num_principal_components();
+		this->num_shape_coefficients_to_fit = settings.get<unsigned int>(
+			"frames.num_shape_coefficients_to_fit", num_shape_coeff);
+
+		// Open source video file.
+		std::ifstream file(video_file);
+		std::cout << "Opening video: " << video_file << std::endl;
+
+		if (!file.is_open()) {
+			throw std::runtime_error("Error opening given file: " + video_file);
+		}
+
+		cv::VideoCapture tmp_cap(video_file); // open video file
+		if (!tmp_cap.isOpened()) {
+			throw std::runtime_error("Could not play video");
+		}
+
+		cap = tmp_cap;
+		Mat frame;
+
+		// reset total frames, just to make sure.
+		total_frames = 0;
+
+		// Get the first frame to see, sometimes frames are empty at the start, keep reading until we hit one.
+		while(frame.empty()) {
+			cap.read(frame);
+			total_frames++;
+		}
+
+		std::cout << frame.size() << std::endl;
+		std::cout << frame.cols << std::endl;
+		std::cout << frame.rows << std::endl;
+
+		// Take over the size of the original video or take width / height from the settings.
+		int frame_width = settings.get<int>("frames.width", frame.cols);
+		int frame_height = settings.get<int>("frames.height", frame.rows);
+
+		Size frame_size = Size(frame_width, frame_height);
+
+		// Initialize writer with given output file
+		VideoWriter tmp_writer(output_file_path.string(), codec, fps, frame_size);
+		if (!tmp_writer.isOpened()) {
+			cout  << "Could not open the output video for write: " << output_file_path << endl;
+			throw std::runtime_error("Could open output video");
+		}
+
+		writer = tmp_writer;
+		this->reconstruction_data = reconstruction_data;
+	};
+
+	/**
+	 * Generate a new keyframe containing information about pose and landmarks
+	 * These are needed to determine if we want the image in the first place.
+	 *
+	 * @param frame
+	 * @return Keyframe
+	 */
+	Keyframe generate_new_keyframe(cv::Mat frame) {
+		int frame_height = frame.rows;
+		int frame_width = frame.cols;
+
+		// Get the necessary information for reconstruction.
+		auto landmarks = reconstruction_data.landmark_list[total_frames];
+		auto landmark_mapper = reconstruction_data.landmark_mapper;
+		auto blendshapes = reconstruction_data.blendshapes;
+		auto morphable_model = reconstruction_data.morphable_model;
+
+		// Reached the end of the landmarks (only applicable for annotated videos):
+		if (reconstruction_data.landmark_list.size() <= total_frames) {
+			std::cout << "Reached end of landmarks(" <<
+					  reconstruction_data.landmark_list.size() <<
+					  "/" << total_frames << ")" << std::endl;
+
+			return Keyframe();
+		}
+
+		if (pca_shape_coefficients.empty()) {
+			pca_shape_coefficients.resize(num_shape_coefficients_to_fit);
+		}
+
+		// make a new one
+		std::vector<float> blend_shape_coefficients;
+
+		vector<cv::Vec4f> model_points;
+		vector<int> vertex_indices;
+		vector<cv::Vec2f> image_points;
+
+		auto mesh = fitting::generate_new_mesh(
+			morphable_model,
+			blendshapes,
+			pca_shape_coefficients, // current pca_coeff will be the mean for the first iterations.
+			blend_shape_coefficients);
+
+		// Will yield model_points, vertex_indices and image_points
+		// todo: should this function not come from mesh?
+		core::get_mesh_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
+
+		auto current_pose = fitting::estimate_orthographic_projection_linear(
+			image_points, model_points, true, frame_height);
+
+		fitting::RenderingParameters rendering_params(current_pose, frame_width, frame_height);
+		Mat affine_cam = fitting::get_3x4_affine_camera_matrix(rendering_params, frame_width, frame_height);
+
+		auto blendshapes_as_basis = morphablemodel::to_matrix(blendshapes);
+		auto current_pca_shape = morphable_model.get_shape_model().draw_sample(pca_shape_coefficients);
+		blend_shape_coefficients = fitting::fit_blendshapes_to_landmarks_nnls(
+				blendshapes, current_pca_shape, affine_cam, image_points, vertex_indices);
+		auto merged_shape = current_pca_shape +
+			blendshapes_as_basis * Eigen::Map<const Eigen::VectorXf>(blend_shape_coefficients.data(),
+																	 blend_shape_coefficients.size());
+
+		auto merged_mesh = morphablemodel::sample_to_mesh(
+			merged_shape,
+			morphable_model.get_color_model().get_mean(),
+			morphable_model.get_shape_model().get_triangle_list(),
+			morphable_model.get_color_model().get_triangle_list(),
+			morphable_model.get_texture_coordinates()
+		);
+
+		auto R = rendering_params.get_rotation();
+
+		// Render the model in a separate window using the estimated pose, shape and merged texture:
+		Mat rendering;
+
+		// render needs 4 channels 8 bits image, needs a two step conversion.
+		cvtColor(frame, rendering, CV_BGR2BGRA);
+
+		// make sure the image is CV_8UC4, maybe do check first?
+		rendering.convertTo(rendering, CV_8UC4);
+		Mat isomap = render::extract_texture(merged_mesh, affine_cam, frame);
+		Mat merged_isomap = isomap_averaging.add_and_merge(isomap);
+
+		Mat frontal_rendering;
+		glm::mat4 modelview_frontal = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+		std::cout << angle << std::endl;
+		core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
+			morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
+			morphable_model.get_color_model().get_mean(),
+			morphable_model.get_shape_model().get_triangle_list(),
+			morphable_model.get_color_model().get_triangle_list(),
+			morphable_model.get_texture_coordinates()
+		);
+
+//		angle -= 10.0;
+		std::tie(frontal_rendering, std::ignore) = render::render(
+				neutral_expression,
+				modelview_frontal,
+				glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f),
+				512, 512,
+				render::create_mipmapped_texture(merged_isomap),
+				true,
+				false,
+				false
+		);
+
+//		cv::imshow("rendering", frontal_rendering);
+//		cv::waitKey(0);
+
+		fitting::FittingResult fitting_result;
+		fitting_result.rendering_parameters = rendering_params;
+		fitting_result.landmarks = landmarks;
+		fitting_result.mesh = mesh;
+
+		// output this?
+		cv::Rect face_roi = core::get_face_roi(image_points, frame_width, frame_height);
+		float frame_laplacian_score = static_cast<float>(variance_of_laplacian(frame(face_roi)));
+
+		return Keyframe(frame_laplacian_score, rendering, fitting_result, total_frames);
+	}
+
+	/**
+	 * Checks if the writer is still open. The writer thread will close if the last frame is processed.
+	 *
+	 * @return bool
+	 */
+	bool is_writing() {
+		return writer.isOpened();
+	}
+
+	/**
+	 * Get a new frame from the video source.
+	 *
+	 * @return cv::Mat
+	 */
+	Mat __get_new_frame() {
+		// Get a new frame from camera.
+		Mat frame;
+		cap.read(frame);
+
+		return frame;
+	};
+
+	/**
+	 * Stop by releasing the VideoCapture.
+	 */
+	void __stop() {
+		writer.release();
+		cap.release();
+	};
+
+	/**
+	 * Start filling the buffer with frames and start a worker thread to keep doing so.
+	 *
+	 * @return
+	 */
+	void start() {
+		// start a thread to keep getting new frames into the buffer from video:
+		frame_buffer_worker = std::make_unique<std::thread>(&ReconstructionVideoWriter::video_iterator, this);
+		frame_buffer_worker.get()->detach();
+	}
+
+	/**
+	 * Fill the buffer by iterating through the video until the very last frame.
+	 */
+	void video_iterator() {
+		// Go and fill the buffer with more frames while we are reconstructing.
+		while (next()) { }
+
+		// stop the video
+		__stop();
+
+		std::cout << "Video stopped at: " << total_frames;
+	};
+
+	/**
+	 *
+	 * @param keyframe
+	 */
+	bool next() {
+		Mat frame = __get_new_frame();
+
+		if (frame.empty()) {
+			return false;
+		}
+
+		// makes a copy of the frame
+		Keyframe keyframe = generate_new_keyframe(frame);
+
+		if(wireframe) {
+			draw_wireframe(keyframe.frame, keyframe);
+		}
+
+		if(landmarks) {
+			draw_landmarks(keyframe.frame, keyframe);
+		}
+
+		writer.write(keyframe.frame);
+		total_frames++;
+
+//		if (show_video) {
+//			std::cout << "show video" << std::endl;
+//			cv::imshow("video", frame);
+//			cv::waitKey(static_cast<int>((1.0 / fps) * 1000.0));
+//		}
+
+		return true;
+	}
+
+	/**
+	 *
+	 * @param pca_shape_coefficients
+	 */
+	void update_reconstruction_coeff(std::vector<float> pca_shape_coefficients) {
+		this->pca_shape_coefficients = pca_shape_coefficients;
+	}
+
+	/**
+	 *
+	 * @param image
+	 * @param landmarks
+	 */
+	void draw_landmarks(Mat &frame, Keyframe keyframe) {
+		auto landmarks = keyframe.fitting_result.landmarks;
+
+		for (auto &&lm : landmarks) {
+			cv::rectangle(frame, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
+				cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
+			);
+		}
+	}
+	/**
+	 * Draws the given mesh as wireframe into the image.
+	 *
+	 * It does backface culling, i.e. draws only vertices in CCW order.
+	 *
+	 * @param[in] image An image to draw into.
+	 * @param[in] mesh The mesh to draw.
+	 * @param[in] modelview Model-view matrix to draw the mesh.
+	 * @param[in] projection Projection matrix to draw the mesh.
+	 * @param[in] viewport Viewport to draw the mesh.
+	 * @param[in] colour Colour of the mesh to be drawn.
+	 */
+	void draw_wireframe(Mat &frame, Keyframe keyframe, cv::Scalar colour = cv::Scalar(0, 255, 0, 255)) {
+		// make a copy, we dont want to alter the original
+		auto mesh = keyframe.fitting_result.mesh;
+		auto modelview = keyframe.fitting_result.rendering_parameters.get_modelview();
+		auto projection = keyframe.fitting_result.rendering_parameters.get_projection();
+		auto viewport = fitting::get_opencv_viewport(frame.cols, frame.rows);
+
+		for (const auto& triangle : mesh.tvi)
+		{
+			const auto p1 = glm::project({ mesh.vertices[triangle[0]][0], mesh.vertices[triangle[0]][1], mesh.vertices[triangle[0]][2] }, modelview, projection, viewport);
+			const auto p2 = glm::project({ mesh.vertices[triangle[1]][0], mesh.vertices[triangle[1]][1], mesh.vertices[triangle[1]][2] }, modelview, projection, viewport);
+			const auto p3 = glm::project({ mesh.vertices[triangle[2]][0], mesh.vertices[triangle[2]][1], mesh.vertices[triangle[2]][2] }, modelview, projection, viewport);
+			if (eos::render::detail::are_vertices_ccw_in_screen_space(glm::vec2(p1), glm::vec2(p2), glm::vec2(p3))) {
+				cv::line(frame, cv::Point(p1.x, p1.y), cv::Point(p2.x, p2.y), colour);
+				cv::line(frame, cv::Point(p2.x, p2.y), cv::Point(p3.x, p3.y), colour);
+				cv::line(frame, cv::Point(p3.x, p3.y), cv::Point(p1.x, p1.y), colour);
+			}
+		}
+	};
+
+	int get_frame_number() {
+		return total_frames;
+	}
+
+
+private:
+	float angle = -45.0;
+	int total_frames = 0;
+	int num_shape_coefficients_to_fit = 0;
+	 // merge all triangles that are facing <60° towards the camera
+	WeightedIsomapAveraging isomap_averaging;
+
+	// video options
+	bool show_video = false;
+	bool wireframe = false;
+	bool landmarks = false;
+	int fps;
+
+	cv::VideoCapture cap;
+	cv::VideoWriter writer;
+
+	// latest pca_shape_coefficients
+	std::vector<float> pca_shape_coefficients;
+	eos::fitting::ReconstructionData reconstruction_data;
+};
 /**
  *
  *
@@ -81,58 +453,53 @@ class BufferedVideoIterator
 public:
 	int width;
 	int height;
-	Mat last_frame;
 	int last_frame_number;
-
-	bool reached_eof;
-
+	Keyframe last_keyframe;
 	std::unique_ptr<std::thread> frame_buffer_worker;
 
 	BufferedVideoIterator() {};
 
 	// TODO: build support for setting the amount of max_frames in the buffer.
-	BufferedVideoIterator(std::string videoFilePath, fitting::ReconstructionData reconstruction_data, boost::property_tree::ptree settings) {
-		std::ifstream file(videoFilePath);
-		std::cout << "Opening video: " << videoFilePath << std::endl;
+	BufferedVideoIterator(std::string video_file, fitting::ReconstructionData reconstruction_data, boost::property_tree::ptree settings) {
+		std::ifstream file(video_file);
+		std::cout << "Opening video: " << video_file << std::endl;
 
 		if (!file.is_open()) {
-			throw std::runtime_error("Error opening given file: " + videoFilePath);
+			throw std::runtime_error("Error opening given file: " + video_file);
 		}
 
-		cv::VideoCapture tmp_cap(videoFilePath); // open video file
+		cv::VideoCapture tmp_cap(video_file); // open video file
 		if (!tmp_cap.isOpened()) {
 			throw std::runtime_error("Could not play video");
 		}
 
 		cap = tmp_cap;
 
+		// Initialize settings
+		min_frames = settings.get<int>("frames.min_frames", 5);
+		drop_frames = settings.get<int>("frames.drop_frames", 0);
+		skip_frames = settings.get<int>("frames.skip_frames", 0);
+		frames_per_bin = settings.get<unsigned int>("frames.frames_per_bin", 2);
+
 		this->reconstruction_data = reconstruction_data;
-
-		// copy settings from gathered from a .ini file
-		min_frames = settings.get<int>("video.min_frames", 5);
-		drop_frames = settings.get<int>("video.drop_frames", 0);
-		skip_frames = settings.get<int>("video.skip_frames", 0);
-		frames_per_bin = settings.get<unsigned int>("video.frames_per_bin", 2);
-
-		unsigned int num_shape_coeff = reconstruction_data.morphable_model.get_shape_model().get_num_principal_components();
+		unsigned int num_shape_coeff = reconstruction_data.
+			morphable_model.get_shape_model().get_num_principal_components();
 
 		this->num_shape_coefficients_to_fit = settings.get<unsigned int>(
-			"video.num_shape_coefficients_to_fit", num_shape_coeff);
+			"frames.num_shape_coefficients_to_fit", num_shape_coeff);
 
 		// initialize bins
 		bins.resize(num_yaw_bins);
 
-		// reset frame count
+		// reset frame count (to be sure)
 		n_frames = 0;
 		total_frames = 0;
 
-		std::cout << "Settings: " << std::endl <<
-			"min_frames: " << min_frames << std::endl <<
-		    "drop_frames: " << drop_frames << std::endl <<
-		    "frames_per_bin: " << frames_per_bin << std::endl <<
-		    "num_shape_coefficients_to_fit: " << num_shape_coefficients_to_fit << std::endl;
-
-		std::cout << "total frames in video: " << cap.get(CV_CAP_PROP_FRAME_COUNT) << std::endl;
+//		std::cout << "Settings: " << std::endl <<
+//			"min_frames: " << min_frames << std::endl <<
+//		    "drop_frames: " << drop_frames << std::endl <<
+//		    "frames_per_bin: " << frames_per_bin << std::endl <<
+//		    "num_shape_coefficients_to_fit: " << num_shape_coefficients_to_fit << std::endl;
 	}
 
 	bool is_playing() {
@@ -323,7 +690,11 @@ public:
 		__stop();
 
 		std::cout << "Video stopped at:" << total_frames << " frames - in buff " << n_frames <<  std::endl;
-	}
+	};
+
+	Keyframe get_last_keyframe() {
+		return last_keyframe;
+	};
 
 	 /**
 	  *
@@ -341,25 +712,24 @@ public:
 
 		// keep the last frame here, so we can play a video subsequently:
 		last_frame_number = total_frames;
-		last_frame = frame;
 
 		// TODO: only calculate lapscore within the bounding box of the face.
 		auto keyframe = generate_new_keyframe(frame);
 		bool frame_added = try_add(keyframe);
 
+		// Added or not, we put this as the last keyframe
+		last_keyframe = keyframe;
+
 		if(frame_added) {
 			n_frames++;
-
 			// Setting that the buffer has changed:
 			frame_buffer_changed = true;
-			std::cout << "frame added(" << total_frames << "): " << keyframe.score << ", " << keyframe.yaw_angle << std::endl;
 		}
 
 		total_frames++;
 
 		// fill up the buffer until we hit the minimum frames we want in the buffer.
-		if(n_frames < min_frames && total_frames < 30) {
-			std::cout << "not enough frames yet: " << n_frames << "/" << min_frames << std::endl;
+		if(n_frames < min_frames) {
 			return next();
 		}
 
@@ -442,9 +812,12 @@ public:
 		cap.release();
 	};
 
+	int get_frame_number() {
+		return total_frames;
+	}
+
 private:
 	cv::VideoCapture cap;
-	std::deque<Keyframe> frame_buffer;
 	eos::fitting::ReconstructionData reconstruction_data;
 
 	using BinContent = std::vector<Keyframe>;
@@ -458,7 +831,7 @@ private:
 	unsigned int frames_per_bin;
 
 	// TODO: make set-able
-	// total frames in processed, not persee in buffer (skipped frames)
+	// total frames in processed, not necessarily in buffer (skipped frames)
 	int total_frames;
 
 	// total frames in buffer
