@@ -215,7 +215,7 @@ namespace eos {
 		 * @param[in,out] image_points
 		 */
 		template <typename vec2f>
-		inline void get_mesh_coordinates(core::LandmarkCollection<vec2f> landmarks,
+		inline void get_landmark_coordinates(core::LandmarkCollection<vec2f> landmarks,
 						 const core::LandmarkMapper& landmark_mapper,
 						 eos::core::Mesh& mesh,
 						 vector<Vec4f>& model_points,

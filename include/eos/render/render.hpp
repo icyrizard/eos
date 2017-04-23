@@ -141,7 +141,6 @@ inline std::pair<cv::Mat, cv::Mat> render(
 	// bool enable_texturing = false; Maybe re-add later, not sure
 	// take a cv::Mat texture instead and convert to Texture internally? no, we don't want to recreate mipmap levels on each render() call.
 
-	auto t1 = std::chrono::high_resolution_clock::now();
 	assert(mesh.vertices.size() == mesh.colors.size() || mesh.colors.empty()); // The number of vertices has to be equal for both shape and colour, or, alternatively, it has to be a shape-only model.
 	assert(mesh.vertices.size() == mesh.texcoords.size() || mesh.texcoords.empty()); // same for the texcoords
 	// another assert: If cv::Mat texture != empty, then we need texcoords?
@@ -173,14 +172,10 @@ inline std::pair<cv::Mat, cv::Mat> render(
 
 		clipspace_vertices.push_back(detail::Vertex<float>{clipspace_coords, vertex_colour, mesh.texcoords[i]});
 	}
-
 	// All vertices are in clip-space now.
 	// Prepare the rasterisation stage.
 	// For every vertex/tri:
 	vector<detail::TriangleToRasterize> triangles_to_raster;
-//#pragma omp target
-//	{
-//#pragma omp parallel for
 		for(int i = 0; i < mesh.tvi.size(); i++) {
 			const auto tri_indices = mesh.tvi[i];
 			// Todo: Split this whole stuff up. Make a "clip" function, ... rename "processProspective..".. what is "process"... get rid of "continue;"-stuff by moving stuff inside process...
@@ -191,6 +186,8 @@ inline std::pair<cv::Mat, cv::Mat> render(
 			// However, when comparing against w_c below, we might run into the trouble of the sign again in the affine case.
 			// 'w' is always positive, as it is -z_camspace, and all z_camspace are negative.
 			unsigned char visibility_bits[3];
+
+			#pragma omp simd
 			for (unsigned char k = 0; k < 3; k++) {
 				visibility_bits[k] = 0;
 				float x_cc = clipspace_vertices[tri_indices[k]].position[0];
@@ -264,16 +261,8 @@ inline std::pair<cv::Mat, cv::Mat> render(
 				}
 			}
 		}
-//	}
 
-
-	// Fragment/pixel shader: Colour the pixel values
-	for (const auto& tri : triangles_to_raster) {
-		detail::raster_triangle(tri, colourbuffer, depthbuffer, texture, enable_far_clipping);
-	}
-	auto t2 = std::chrono::high_resolution_clock::now();
-	auto final_timing = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-	printf("Tri %lu %lld ms\n", triangles_to_raster.size(), final_timing);
+	detail::raster_triangle_parallel(triangles_to_raster, colourbuffer, depthbuffer, texture, enable_far_clipping);
 
 	return std::make_pair(colourbuffer, depthbuffer);
 };

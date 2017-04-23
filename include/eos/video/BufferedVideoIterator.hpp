@@ -35,7 +35,8 @@
 #include <atomic>
 #include <unistd.h>
 
-#include <glm/gtx/rotate_vector.hpp>
+#include "glm/gtc/matrix_transform.hpp"
+#include "glm/gtc/quaternion.hpp"
 
 using cv::Mat;
 using cv::Vec2f;
@@ -135,15 +136,11 @@ public:
 			total_frames++;
 		}
 
-		std::cout << frame.size() << std::endl;
-		std::cout << frame.cols << std::endl;
-		std::cout << frame.rows << std::endl;
-
 		// Take over the size of the original video or take width / height from the settings.
-		int frame_width = settings.get<int>("frames.width", frame.cols);
-		int frame_height = settings.get<int>("frames.height", frame.rows);
+		output_width = settings.get<int>("output.width", frame.cols);
+		output_height = settings.get<int>("output.height", frame.rows);
 
-		Size frame_size = Size(frame_width, frame_height);
+		Size frame_size = Size(output_width, output_height);
 
 		// Initialize writer with given output file
 		VideoWriter tmp_writer(output_file_path.string(), codec, fps, frame_size);
@@ -193,15 +190,12 @@ public:
 		vector<int> vertex_indices;
 		vector<cv::Vec2f> image_points;
 
-		auto mesh = fitting::generate_new_mesh(
-			morphable_model,
-			blendshapes,
-			pca_shape_coefficients, // current pca_coeff will be the mean for the first iterations.
-			blend_shape_coefficients);
+		 // current pca_coeff will be the mean for the first iterations.
+		auto mesh = fitting::generate_new_mesh(morphable_model, blendshapes, pca_shape_coefficients, blend_shape_coefficients);
 
 		// Will yield model_points, vertex_indices and image_points
 		// todo: should this function not come from mesh?
-		core::get_mesh_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
+		core::get_landmark_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
 
 		auto current_pose = fitting::estimate_orthographic_projection_linear(
 			image_points, model_points, true, frame_height);
@@ -213,8 +207,7 @@ public:
 		auto current_pca_shape = morphable_model.get_shape_model().draw_sample(pca_shape_coefficients);
 		blend_shape_coefficients = fitting::fit_blendshapes_to_landmarks_nnls(
 				blendshapes, current_pca_shape, affine_cam, image_points, vertex_indices);
-		auto merged_shape = current_pca_shape +
-			blendshapes_as_basis * Eigen::Map<const Eigen::VectorXf>(blend_shape_coefficients.data(),
+		auto merged_shape = current_pca_shape + blendshapes_as_basis * Eigen::Map<const Eigen::VectorXf>(blend_shape_coefficients.data(),
 																	 blend_shape_coefficients.size());
 
 		auto merged_mesh = morphablemodel::sample_to_mesh(
@@ -225,8 +218,6 @@ public:
 			morphable_model.get_texture_coordinates()
 		);
 
-		auto R = rendering_params.get_rotation();
-
 		// Render the model in a separate window using the estimated pose, shape and merged texture:
 		Mat rendering;
 
@@ -235,45 +226,39 @@ public:
 
 		// make sure the image is CV_8UC4, maybe do check first?
 		rendering.convertTo(rendering, CV_8UC4);
-		Mat isomap = render::extract_texture(merged_mesh, affine_cam, frame);
+		auto t1 = std::chrono::high_resolution_clock::now();
+		Mat isomap = render::extract_texture(merged_mesh, affine_cam, frame, true, render::TextureInterpolation::NearestNeighbour, 512);
+
+		// Merge the isomaps - add the current one to the already merged ones:
 		Mat merged_isomap = isomap_averaging.add_and_merge(isomap);
-
 		Mat frontal_rendering;
-		glm::mat4 modelview_frontal = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
-		std::cout << angle << std::endl;
-		core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
-			morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
-			morphable_model.get_color_model().get_mean(),
-			morphable_model.get_shape_model().get_triangle_list(),
-			morphable_model.get_color_model().get_triangle_list(),
-			morphable_model.get_texture_coordinates()
-		);
 
-//		angle -= 10.0;
+		auto rot_mtx_y = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f ));
+		rendering_params.set_rotation(rot_mtx_y);
+
+		auto modelview_no_translation = rendering_params.get_modelview();
+		modelview_no_translation[3][0] = 0;
+		modelview_no_translation[3][1] = 0;
+
 		std::tie(frontal_rendering, std::ignore) = render::render(
-				neutral_expression,
-				modelview_frontal,
+				merged_mesh,
+				modelview_no_translation,
 				glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f),
-				512, 512,
+				256, 256,
 				render::create_mipmapped_texture(merged_isomap),
 				true,
 				false,
 				false
 		);
 
-//		cv::imshow("rendering", frontal_rendering);
-//		cv::waitKey(0);
+		cvtColor(frontal_rendering, frontal_rendering, CV_BGRA2BGR);
 
 		fitting::FittingResult fitting_result;
 		fitting_result.rendering_parameters = rendering_params;
 		fitting_result.landmarks = landmarks;
 		fitting_result.mesh = mesh;
 
-		// output this?
-		cv::Rect face_roi = core::get_face_roi(image_points, frame_width, frame_height);
-		float frame_laplacian_score = static_cast<float>(variance_of_laplacian(frame(face_roi)));
-
-		return Keyframe(frame_laplacian_score, rendering, fitting_result, total_frames);
+		return Keyframe(0.0f, frontal_rendering, fitting_result, total_frames);
 	}
 
 	/**
@@ -344,22 +329,22 @@ public:
 		// makes a copy of the frame
 		Keyframe keyframe = generate_new_keyframe(frame);
 
-		if(wireframe) {
-			draw_wireframe(keyframe.frame, keyframe);
-		}
-
-		if(landmarks) {
-			draw_landmarks(keyframe.frame, keyframe);
-		}
+//		if(wireframe) {
+//			draw_wireframe(keyframe.frame, keyframe);
+//		}
+//
+//		if(landmarks) {
+//			draw_landmarks(keyframe.frame, keyframe);
+//		}
 
 		writer.write(keyframe.frame);
 		total_frames++;
 
-//		if (show_video) {
-//			std::cout << "show video" << std::endl;
-//			cv::imshow("video", frame);
-//			cv::waitKey(static_cast<int>((1.0 / fps) * 1000.0));
-//		}
+		if (show_video) {
+			std::cout << "show video" << std::endl;
+			cv::imshow("video", keyframe.frame);
+			cv::waitKey(static_cast<int>((1.0 / fps) * 1000.0));
+		}
 
 		return true;
 	}
@@ -424,7 +409,10 @@ public:
 
 
 private:
-	float angle = -45.0;
+	int output_width;
+	int output_height;
+
+	float angle = -45.0f;
 	int total_frames = 0;
 	int num_shape_coefficients_to_fit = 0;
 	 // merge all triangles that are facing <60° towards the camera
@@ -552,12 +540,13 @@ public:
 
 		// Will yield model_points, vertex_indices and frame_points
 		// todo: should this function not come from mesh?
-		core::get_mesh_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
+		core::get_landmark_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
 
 		auto current_pose = fitting::estimate_orthographic_projection_linear(
 			image_points, model_points, true, frame_height
 		);
 
+		// set all fitting params we found for this Keyframe
 		fitting::RenderingParameters rendering_params(current_pose, frame_width, frame_height);
 		fitting::FittingResult fitting_result;
 		fitting_result.rendering_parameters = rendering_params;

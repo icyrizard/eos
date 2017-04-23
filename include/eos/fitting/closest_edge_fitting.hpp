@@ -468,6 +468,7 @@ std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& mesh, co
 	auto t1 = std::chrono::high_resolution_clock::now();
 //	#pragma omp target map(to: occluding_vertices, mesh, rotated_vertices)
 //	#pragma omp parallel for
+	// TODO: make portable!
 #pragma omp target map(alloc:vertex_id_visible_map) map(from:occluding_vertices, rotated_vertices, mesh)
 	{
 #pragma omp parallel for
@@ -510,8 +511,6 @@ std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& mesh, co
 		}
 	}
 
-	auto t2 = std::chrono::high_resolution_clock::now();
-
 	// copy the results to final vertex ids
 	std::vector<int> final_vertex_ids;
 	for (int i = 0; i < occluding_vertices.size(); ++i) {
@@ -521,13 +520,6 @@ std::vector<int> occluding_boundary_vertices_parallel(const core::Mesh& mesh, co
 			final_vertex_ids.push_back(vertex_idx);
 		}
 	}
-
-	auto final_timing = std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count();
-	printf("S %lu %lld ms (mean: %f)\n",
-		   final_vertex_ids.size(),
-		   final_timing,
-		   static_cast<float>(final_timing) / final_vertex_ids.size()
-	);
 
 	return final_vertex_ids;
 };

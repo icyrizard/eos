@@ -252,7 +252,7 @@ void render_output(
 
 	// Will yield model_points, vertex_indices and image_points
 	// todo: should this function not come from mesh?
-	core::get_mesh_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
+	core::get_landmark_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
 
 	auto current_pose = fitting::estimate_orthographic_projection_linear(
 		image_points, model_points, true, frame_height);
@@ -656,6 +656,7 @@ int main(int argc, char *argv[]) {
 	auto reconstruction_data = eos::fitting::ReconstructionData{
 		morphable_model, blendshapes, landmark_mapper, landmark_list, model_contour, ibug_contour, edge_topology};
 
+
 	// Start with the video play and get video file:
 	BufferedVideoIterator vid_iterator;
 
@@ -668,6 +669,15 @@ int main(int argc, char *argv[]) {
 
 	// Start getting video frames:
 	vid_iterator.start();
+	ReconstructionVideoWriter vid_writer;
+	try {
+		vid_writer = ReconstructionVideoWriter(videofile.string(), reconstruction_data, settings);
+	} catch(std::runtime_error &e) {
+		std::cout << e.what() << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	int num_iterations = settings.get<int>("reconstruction.num_iterations", 10);
 //	vid_writer.start();
 
 	// Count the amount of iterations:
@@ -681,7 +691,7 @@ int main(int argc, char *argv[]) {
 
 		// it makes no sense to update pca_coeff if nothing in the buffer has changed:
 		if (vid_iterator.has_changed()) {
-			std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
+			std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< num_iterations << std::endl;
 
 			// Fit shape and pose:
 			auto t1 = std::chrono::high_resolution_clock::now();
@@ -696,7 +706,7 @@ int main(int argc, char *argv[]) {
 				edge_topology,
 				ibug_contour,
 				model_contour,
-				50,
+				num_iterations,
 				boost::none,
 				30.0f,
 				boost::none,
@@ -709,9 +719,13 @@ int main(int argc, char *argv[]) {
 			auto t2 = std::chrono::high_resolution_clock::now();
 			std::cout << "Reconstruction took "
 					  << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count()
-					  << "ms, mean(" << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() / key_frames.size()
+					  << "ms, mean(" << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() / (key_frames.size() * num_iterations)
 					  << "ms)" << std::endl;
 
+			if(settings.get<bool>("output.make_video", false)) {
+				vid_writer.update_reconstruction_coeff(pca_shape_coefficients);
+				vid_writer.next();
+			}
 
 //			evaluate_results(
 //				key_frames,
@@ -735,39 +749,39 @@ int main(int argc, char *argv[]) {
 	}
 
 //	vid_writer.__stop();
-	if(settings.get<bool>("output.make_video", false)) {
-		ReconstructionVideoWriter vid_writer;
-		try {
-			vid_writer = ReconstructionVideoWriter(videofile.string(), reconstruction_data, settings);
-		} catch(std::runtime_error &e) {
-			std::cout << e.what() << std::endl;
-			return EXIT_FAILURE;
-		}
-		// Render output:
-		std::cout << "Waiting for video to be completed..." << std::endl;
-		vid_writer.update_reconstruction_coeff(pca_shape_coefficients);
-
-		while (vid_writer.next()) {
-			printf("%d/%d\r", vid_writer.get_frame_number(), vid_iterator.get_frame_number());
-		}
-
-	}
-
-//	auto key_frames = vid_iterator.get_keyframes();
-//	std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< std::endl;
+//	if(settings.get<bool>("output.make_video", false)) {
+//		// Render output:
+//		std::cout << "Waiting for video to be completed..." << std::endl;
+//		vid_writer.update_reconstruction_coeff(pca_shape_coefficients);
 //
-//	evaluate_results(
-//		key_frames,
-//		rendering_paramss,
-//		meshs,
-//		pca_shape_coefficients,
-//		blendshape_coefficients,
-//		fitted_image_points,
-//		annotations,
-//		reconstruction_data,
-//		settings,
-//		n_iter
-//	);
+//		int count = 0;
+//		while (count < 40) {
+//			auto t1 = std::chrono::high_resolution_clock::now();
+//			vid_writer.next();
+//			auto t2 = std::chrono::high_resolution_clock::now();
+//			printf("Frame %d/%d (%d)\n", vid_writer.get_frame_number(), vid_iterator.get_frame_number(), count);
+//
+//			std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << "ms" << std::endl;
+//			count++;
+//		}
+//
+//		vid_writer.__stop();
+//	}
+
+	auto key_frames = vid_iterator.get_keyframes();
+
+	evaluate_results(
+		key_frames,
+		rendering_paramss,
+		meshs,
+		pca_shape_coefficients,
+		blendshape_coefficients,
+		fitted_image_points,
+		annotations,
+		reconstruction_data,
+		settings,
+		n_iter
+	);
 
 	//todo: we could build our final obj here?
 

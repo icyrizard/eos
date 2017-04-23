@@ -78,7 +78,7 @@ namespace detail { cv::Mat interpolate_black_line(cv::Mat isomap); }
  * @param[in] mesh A mesh with texture coordinates.
  * @param[in] affine_camera_matrix An estimated 3x4 affine camera matrix.
  * @param[in] image The image to extract the texture from. Should be 8UC3, other types not supported yet.
- * @param[in] compute_view_angle A flag whether the view angle of each vertex should be computed and returned. If set to true, the angle will be encoded into the alpha channel (0 meaning occluded or facing away 90°, 127 meaning facing a 45° angle and 255 meaning front-facing, and all values in between). If set to false, the alpha channel will only contain 0 for occluded vertices and 255 for visible vertices.
+ * @param[in] compute_view_angle A flag whether the view angle of each vertex should be computed and returned. If set to true, the angle will be encoded into the alpha channel (0 meaning occluded or facing away 90ï¿½, 127 meaning facing a 45ï¿½ angle and 255 meaning front-facing, and all values in between). If set to false, the alpha channel will only contain 0 for occluded vertices and 255 for visible vertices.
  * @param[in] mapping_type The interpolation type to be used for the extraction.
  * @param[in] isomap_resolution The resolution of the generated isomap. Defaults to 512x512.
  * @return The extracted texture as isomap (texture map).
@@ -109,7 +109,7 @@ inline cv::Mat extract_texture(const core::Mesh& mesh, cv::Mat affine_camera_mat
  * @param[in] affine_camera_matrix An estimated 3x4 affine camera matrix.
  * @param[in] image The image to extract the texture from.
  * @param[in] depthbuffer A pre-calculated depthbuffer image.
- * @param[in] compute_view_angle A flag whether the view angle of each vertex should be computed and returned. If set to true, the angle will be encoded into the alpha channel (0 meaning occluded or facing away 90°, 127 meaning facing a 45° angle and 255 meaning front-facing, and all values in between). If set to false, the alpha channel will only contain 0 for occluded vertices and 255 for visible vertices.
+ * @param[in] compute_view_angle A flag whether the view angle of each vertex should be computed and returned. If set to true, the angle will be encoded into the alpha channel (0 meaning occluded or facing away 90Â°, 127 meaning facing a 45Â° angle and 255 meaning front-facing, and all values in between). If set to false, the alpha channel will only contain 0 for occluded vertices and 255 for visible vertices.
  * @param[in] mapping_type The interpolation type to be used for the extraction.
  * @param[in] isomap_resolution The resolution of the generated isomap. Defaults to 512x512.
  * @return The extracted texture as isomap (texture map).
@@ -184,11 +184,11 @@ inline cv::Mat extract_texture(core::Mesh mesh, cv::Mat affine_camera_matrix, cv
 				const float angle = -face_normal_transformed[2]; // flip sign, see above
 				assert(angle >= -1.f && angle <= 1.f);
 				// angle is [-1, 1].
-				//  * +1 means   0° (same direction)
-				//  *  0 means  90°
-				//  * -1 means 180° (facing opposite directions)
-				// It's a linear relation, so +0.5 is 45° etc.
-				// An angle larger than 90° means the vertex won't be rendered anyway (because it's back-facing) so we encode 0° to 90°.
+				//  * +1 means   0Â° (same direction)
+				//  *  0 means  90Â°
+				//  * -1 means 180Â° (facing opposite directions)
+				// It's a linear relation, so +0.5 is 45Â° etc.
+				// An angle larger than 90Â° means the vertex won't be rendered anyway (because it's back-facing) so we encode 0Â° to 90Â°.
 				if (angle < 0.0f) {
 					alpha_value = 0.0f;
 				} else {
@@ -285,7 +285,7 @@ inline cv::Mat extract_texture(core::Mesh mesh, cv::Mat affine_camera_matrix, cv
 							}
 							isomap.at<Vec3b>(y, x) = color;
 						}
-						// Bilinear mapping: calculate pixel color depending on the four neighbouring texels
+							// Bilinear mapping: calculate pixel color depending on the four neighbouring texels
 						else if (mapping_type == TextureInterpolation::Bilinear) {
 
 							// calculate corresponding position of dst_coord pixel center in image (src)
@@ -317,7 +317,7 @@ inline cv::Mat extract_texture(core::Mesh mesh, cv::Mat affine_camera_matrix, cv
 								isomap.at<Vec3b>(y, x)[color] = color_upper_left + color_upper_right + color_lower_left + color_lower_right;
 							}
 						}
-						// NearestNeighbour mapping: set color of pixel to color of nearest texel
+							// NearestNeighbour mapping: set color of pixel to color of nearest texel
 						else if (mapping_type == TextureInterpolation::NearestNeighbour) {
 
 							// calculate corresponding position of dst_coord pixel center in image (src)
@@ -390,6 +390,8 @@ cv::Mat extract_texture(core::Mesh mesh, glm::mat4x4 view_model_matrix, glm::mat
 
     vector<bool> visibility_ray;
     vector<vec4> rotated_vertices;
+
+	auto t1 = std::chrono::high_resolution_clock::now();
     // In perspective case... does the perspective projection matrix not change visibility? Do we not need to
     // apply it?
     // (If so, then we can change the two input matrices to this function to one (mvp_matrix)).
@@ -397,6 +399,9 @@ cv::Mat extract_texture(core::Mesh mesh, glm::mat4x4 view_model_matrix, glm::mat
                   [&rotated_vertices, &view_model_matrix](auto&& v) {
                       rotated_vertices.push_back(view_model_matrix * v);
                   });
+	auto t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 1 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
+
     // This code is duplicated from the edge-fitting. I think I can put this into a function in the library.
     for (const auto& vertex : rotated_vertices)
     {
@@ -429,6 +434,8 @@ cv::Mat extract_texture(core::Mesh mesh, glm::mat4x4 view_model_matrix, glm::mat
         }
         visibility_ray.push_back(visible);
     }
+	t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 2 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
 
     vector<vec4> wnd_coords; // will contain [x_wnd, y_wnd, z_ndc, 1/w_clip]
     for (auto&& vtx : mesh.vertices)
@@ -441,6 +448,8 @@ cv::Mat extract_texture(core::Mesh mesh, glm::mat4x4 view_model_matrix, glm::mat
         wnd_coords.push_back(clip_coords);
     }
 
+	t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 3 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
     // Go on with extracting: This only needs the rasteriser/FS, not the whole Renderer.
     const int tex_width = isomap_resolution;
     const int tex_height =
@@ -483,9 +492,210 @@ cv::Mat extract_texture(core::Mesh mesh, glm::mat4x4 view_model_matrix, glm::mat
             extraction_rasterizer.raster_triangle(pa, pb, pc, image_to_extract_from_as_tex);
         }
     }
+	t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 4 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
 
     return extraction_rasterizer.colorbuffer;
 };
+
+#ifdef _OPENMP
+/**
+ * @brief Extracts the texture of the face from the given image and stores it as isomap (a rectangular texture map).
+ *
+ * New texture extraction, will replace above one at some point.
+ * Copy the documentation from above extract_texture function, once we replace it.
+ *
+ * Note/Todo: Add an overload that takes a vector of bool / visible vertices, for the case when we already computed the visibility? (e.g. for edge-fitting)
+ *
+ * @param[in] mesh A mesh with texture coordinates.
+ * @param[in] view_model_matrix Todo.
+ * @param[in] projection_matrix Todo.
+ * @param[in] viewport Not needed at the moment. Might be, if we change clip_to_screen_space() to take a viewport.
+ * @param[in] image The image to extract the texture from. Todo: Does it have to be 8UC3 or something, or does it not matter?
+ * @param[in] compute_view_angle Unused at the moment.
+ * @param[in] isomap_resolution The resolution of the generated isomap. Defaults to 512x512.
+ * @return The extracted texture as isomap (texture map).
+ */
+cv::Mat extract_texture_parallel(core::Mesh mesh, glm::mat4x4 view_model_matrix, glm::mat4x4 projection_matrix,
+								 glm::vec4 /*viewport, not needed at the moment */, cv::Mat image,
+								 bool /* compute_view_angle, unused atm */, int isomap_resolution = 512)
+{
+	using detail::divide_by_w;
+	using glm::vec2;
+	using glm::vec3;
+	using glm::vec4;
+	using std::vector;
+	// actually we only need a rasteriser for this!
+	Rasterizer<ExtractionFragmentShader> extraction_rasterizer(isomap_resolution, isomap_resolution);
+	Texture image_to_extract_from_as_tex = create_mipmapped_texture(image, 1);
+	extraction_rasterizer.enable_depth_test = false;
+	extraction_rasterizer.extracting_tex = true;
+
+	vector<vec4> rotated_vertices;
+
+	auto t1 = std::chrono::high_resolution_clock::now();
+	// In perspective case... does the perspective projection matrix not change visibility? Do we not need to
+	// apply it?
+	// (If so, then we can change the two input matrices to this function to one (mvp_matrix)).
+	std::for_each(std::begin(mesh.vertices), std::end(mesh.vertices),
+				  [&rotated_vertices, &view_model_matrix](auto&& v) {
+					  rotated_vertices.push_back(view_model_matrix * v);
+				  });
+
+	auto t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 1 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
+
+	std::vector<int> visibility_ray(rotated_vertices.size());
+	std::cout << "roated vertices size: "  << rotated_vertices.size() << std::endl;
+
+//	#pragma omp target map(to: occluding_vertices, mesh, rotated_vertices)
+//	#pragma omp parallel for
+	// TODO: make portable!
+#pragma omp target map(alloc:visibility_ray) map(from:rotated_vertices, mesh)
+	{
+#pragma omp parallel for
+		for (int i = 0; i < rotated_vertices.size(); i++) {
+			const auto vertex = rotated_vertices[i];
+			int visible = 1;
+
+			glm::vec3 ray_origin(vertex);
+
+			// we shoot the ray from the vertex towards the camera
+			glm::vec3 ray_direction(0.0f, 0.0f, 1.0f);
+
+			// For every tri of the rotated mesh:
+			for (int j = 0; j < mesh.tvi.size(); j++) {
+				auto tri = mesh.tvi[j];
+				auto &v0 = rotated_vertices[tri[0]];
+				auto &v1 = rotated_vertices[tri[1]];
+				auto &v2 = rotated_vertices[tri[2]];
+
+				auto intersect = fitting::ray_triangle_intersect(ray_origin,
+																 ray_direction,
+																 glm::vec3(v0),
+																 glm::vec3(v1),
+																 glm::vec3(v2),
+																 false);
+
+				// first is bool intersect, second is the distance t
+				if (intersect.first == true) {
+					// We've hit a triangle. Ray hit its own triangle. If it's behind the ray origin, ignore the intersection:
+					// Check if in front or behind?
+					if (intersect.second.get() <= 1e-4) {
+						continue; // the intersection is behind the vertex, we don't care about it
+					}
+					// Otherwise, we've hit a genuine triangle, and the vertex is not visible:
+					visible = 0;
+					break;
+				}
+			}
+
+			visibility_ray[i] = visible;
+		}
+	}
+
+	// This code is duplicated from the edge-fitting. I think I can put this into a function in the library.
+//    for (const auto& vertex : rotated_vertices)
+//    {
+//        bool visible = true;
+//        // For every tri of the rotated mesh:
+//        for (auto&& tri : mesh.tvi)
+//        {
+//            auto& v0 = rotated_vertices[tri[0]]; // const?
+//            auto& v1 = rotated_vertices[tri[1]];
+//            auto& v2 = rotated_vertices[tri[2]];
+//
+//            vec3 ray_origin(vertex);
+//            vec3 ray_direction(0.0f, 0.0f, 1.0f); // we shoot the ray from the vertex towards the camera
+//            auto intersect = fitting::ray_triangle_intersect(ray_origin, ray_direction, vec3(v0), vec3(v1),
+//                                                             vec3(v2), false);
+//            // first is bool intersect, second is the distance t
+//            if (intersect.first == true)
+//            {
+//                // We've hit a triangle. Ray hit its own triangle. If it's behind the ray origin, ignore the
+//                // intersection:
+//                // Check if in front or behind?
+//                if (intersect.second.get() <= 1e-4)
+//                {
+//                    continue; // the intersection is behind the vertex, we don't care about it
+//                }
+//                // Otherwise, we've hit a genuine triangle, and the vertex is not visible:
+//                visible = false;
+//                break;
+//            }
+//        }
+//        visibility_ray.push_back(visible);
+//    }
+
+	t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 2 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
+
+	vector<vec4> wnd_coords; // will contain [x_wnd, y_wnd, z_ndc, 1/w_clip]
+	for (auto&& vtx : mesh.vertices)
+	{
+		auto clip_coords = projection_matrix * view_model_matrix * vtx;
+		clip_coords = divide_by_w(clip_coords);
+		const vec2 screen_coords = clip_to_screen_space(clip_coords.x, clip_coords.y, image.cols, image.rows);
+		clip_coords.x = screen_coords.x;
+		clip_coords.y = screen_coords.y;
+		wnd_coords.push_back(clip_coords);
+	}
+
+	t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 3 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
+	// Go on with extracting: This only needs the rasteriser/FS, not the whole Renderer.
+	const int tex_width = isomap_resolution;
+	const int tex_height =
+		isomap_resolution; // keeping this in case we need non-square texture maps at some point
+//    for (const auto& tvi : mesh.tvi)
+#pragma omp target
+	{
+#pragma omp parallel for
+		for (int i = 0; i < mesh.tvi.size(); i++) {
+			const auto tvi = mesh.tvi[i];
+			if (visibility_ray[tvi[0]] && visibility_ray[tvi[1]] &&
+				visibility_ray[tvi[2]]) // can also try using ||, but...
+			{
+				// Test with a rendered & re-extracted texture shows that we're off by a pixel or more,
+				// definitely need to correct this. Probably here.
+				// It looks like it is 1-2 pixels off. Definitely a bit more than 1.
+				detail::Vertex<double> pa{
+					vec4(mesh.texcoords[tvi[0]][0] * tex_width, mesh.texcoords[tvi[0]][1] * tex_height,
+						 wnd_coords[tvi[0]].z /* z_ndc */, wnd_coords[tvi[0]].w /* 1/w_clip */),
+					vec3(/* empty */),
+					vec2(
+						wnd_coords[tvi[0]].x / image.cols,
+						/* maybe 1 - ... ? */ wnd_coords[tvi[0]].y /
+							image
+								.rows /* wndcoords of the projected/rendered model triangle (in the input img). Normalised to 0,1. */)};
+				detail::Vertex<double> pb{
+					vec4(mesh.texcoords[tvi[1]][0] * tex_width, mesh.texcoords[tvi[1]][1] * tex_height,
+						 wnd_coords[tvi[1]].z /* z_ndc */, wnd_coords[tvi[1]].w /* 1/w_clip */),
+					vec3(/* empty */),
+					vec2(
+						wnd_coords[tvi[1]].x / image.cols,
+						/* maybe 1 - ... ? */ wnd_coords[tvi[1]].y /
+							image
+								.rows /* wndcoords of the projected/rendered model triangle (in the input img). Normalised to 0,1. */)};
+				detail::Vertex<double> pc{
+					vec4(mesh.texcoords[tvi[2]][0] * tex_width, mesh.texcoords[tvi[2]][1] * tex_height,
+						 wnd_coords[tvi[2]].z /* z_ndc */, wnd_coords[tvi[2]].w /* 1/w_clip */),
+					vec3(/* empty */),
+					vec2(
+						wnd_coords[tvi[2]].x / image.cols,
+						/* maybe 1 - ... ? */ wnd_coords[tvi[2]].y /
+							image.rows /* wndcoords of the projected/rendered model triangle (in the input img). Normalised to 0,1. */)};
+				extraction_rasterizer.raster_triangle(pa, pb, pc, image_to_extract_from_as_tex);
+			}
+		}
+	}
+	t2 = std::chrono::high_resolution_clock::now();
+	std::cout << "extract 4 " << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() << std::endl;
+
+	return extraction_rasterizer.colorbuffer;
+};
+
+#endif // _OPENMP
 
 } /* namespace v2 */
 

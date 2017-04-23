@@ -473,6 +473,7 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 {
 	using cv::Vec2f;
 	using cv::Vec3f;
+
 	for (int yi = triangle.min_y; yi <= triangle.max_y; ++yi)
 	{
 		for (int xi = triangle.min_x; xi <= triangle.max_x; ++xi)
@@ -482,9 +483,18 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 			const float y = static_cast<float>(yi) + 0.5f;
 
 			// these will be used for barycentric weights computation
-			const double one_over_v0ToLine12 = 1.0 / implicit_line(triangle.v0.position[0], triangle.v0.position[1], triangle.v1.position, triangle.v2.position);
-			const double one_over_v1ToLine20 = 1.0 / implicit_line(triangle.v1.position[0], triangle.v1.position[1], triangle.v2.position, triangle.v0.position);
-			const double one_over_v2ToLine01 = 1.0 / implicit_line(triangle.v2.position[0], triangle.v2.position[1], triangle.v0.position, triangle.v1.position);
+			const double one_over_v0ToLine12 = 1.0 / implicit_line(triangle.v0.position[0],
+																   triangle.v0.position[1],
+																   triangle.v1.position,
+																   triangle.v2.position);
+			const double one_over_v1ToLine20 = 1.0 / implicit_line(triangle.v1.position[0],
+																   triangle.v1.position[1],
+																   triangle.v2.position,
+																   triangle.v0.position);
+			const double one_over_v2ToLine01 = 1.0 / implicit_line(triangle.v2.position[0],
+																   triangle.v2.position[1],
+																   triangle.v0.position,
+																   triangle.v1.position);
 			// affine barycentric weights
 			double alpha = implicit_line(x, y, triangle.v1.position, triangle.v2.position) * one_over_v0ToLine12;
 			double beta = implicit_line(x, y, triangle.v2.position, triangle.v0.position) * one_over_v1ToLine20;
@@ -496,8 +506,10 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 				const int pixel_index_row = yi;
 				const int pixel_index_col = xi;
 
-				const double z_affine = alpha*static_cast<double>(triangle.v0.position[2]) + beta*static_cast<double>(triangle.v1.position[2]) + gamma*static_cast<double>(triangle.v2.position[2]);
-				
+				const double z_affine = alpha * static_cast<double>(triangle.v0.position[2])
+					+ beta * static_cast<double>(triangle.v1.position[2])
+					+ gamma * static_cast<double>(triangle.v2.position[2]);
+
 				bool draw = true;
 				if (enable_far_clipping)
 				{
@@ -511,31 +523,49 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 				if (z_affine < depthbuffer.at<double>(pixel_index_row, pixel_index_col) && draw)
 				{
 					// perspective-correct barycentric weights
-					double d = alpha*triangle.one_over_z0 + beta*triangle.one_over_z1 + gamma*triangle.one_over_z2;
+					double
+						d = alpha * triangle.one_over_z0 + beta * triangle.one_over_z1 + gamma * triangle.one_over_z2;
 					d = 1.0 / d;
-					alpha *= d*triangle.one_over_z0; // In case of affine cam matrix, everything is 1 and a/b/g don't get changed.
-					beta *= d*triangle.one_over_z1;
-					gamma *= d*triangle.one_over_z2;
+					alpha *= d * triangle
+						.one_over_z0; // In case of affine cam matrix, everything is 1 and a/b/g don't get changed.
+					beta *= d * triangle.one_over_z1;
+					gamma *= d * triangle.one_over_z2;
 
 					// attributes interpolation
-					glm::tvec3<float> color_persp = static_cast<float>(alpha)*triangle.v0.color + static_cast<float>(beta)*triangle.v1.color + static_cast<float>(gamma)*triangle.v2.color; // Note: color might be empty if we use texturing and the shape-only model - but it works nonetheless? I think I set the vertex-colour to 127 in the shape-only model.
-					glm::tvec2<float> texcoords_persp = static_cast<float>(alpha)*triangle.v0.texcoords + static_cast<float>(beta)*triangle.v1.texcoords + static_cast<float>(gamma)*triangle.v2.texcoords;
+					glm::tvec3<float> color_persp =
+						static_cast<float>(alpha) * triangle.v0.color + static_cast<float>(beta) * triangle.v1.color
+							+ static_cast<float>(gamma) * triangle.v2
+								.color; // Note: color might be empty if we use texturing and the shape-only model - but it works nonetheless? I think I set the vertex-colour to 127 in the shape-only model.
+					glm::tvec2<float> texcoords_persp = static_cast<float>(alpha) * triangle.v0.texcoords
+						+ static_cast<float>(beta) * triangle.v1.texcoords
+						+ static_cast<float>(gamma) * triangle.v2.texcoords;
 
 					glm::tvec3<float> pixel_color;
 					// Pixel Shader:
-					if (texture) { // We use texturing
+					if (texture)
+					{ // We use texturing
 						// check if texture != NULL?
 						// partial derivatives (for mip-mapping)
-						const float u_over_z = -(triangle.alphaPlane.a*x + triangle.alphaPlane.b*y + triangle.alphaPlane.d) * triangle.one_over_alpha_c;
-						const float v_over_z = -(triangle.betaPlane.a*x + triangle.betaPlane.b*y + triangle.betaPlane.d) * triangle.one_over_beta_c;
-						const float one_over_z = -(triangle.gammaPlane.a*x + triangle.gammaPlane.b*y + triangle.gammaPlane.d) * triangle.one_over_gamma_c;
+						const float u_over_z =
+							-(triangle.alphaPlane.a * x + triangle.alphaPlane.b * y + triangle.alphaPlane.d)
+								* triangle.one_over_alpha_c;
+						const float v_over_z =
+							-(triangle.betaPlane.a * x + triangle.betaPlane.b * y + triangle.betaPlane.d)
+								* triangle.one_over_beta_c;
+						const float one_over_z =
+							-(triangle.gammaPlane.a * x + triangle.gammaPlane.b * y + triangle.gammaPlane.d)
+								* triangle.one_over_gamma_c;
 						const float one_over_squared_one_over_z = 1.0f / std::pow(one_over_z, 2);
 
 						// partial derivatives of U/V coordinates with respect to X/Y pixel's screen coordinates
-						float dudx = one_over_squared_one_over_z * (triangle.alpha_ffx * one_over_z - u_over_z * triangle.gamma_ffx);
-						float dudy = one_over_squared_one_over_z * (triangle.beta_ffx * one_over_z - v_over_z * triangle.gamma_ffx);
-						float dvdx = one_over_squared_one_over_z * (triangle.alpha_ffy * one_over_z - u_over_z * triangle.gamma_ffy);
-						float dvdy = one_over_squared_one_over_z * (triangle.beta_ffy * one_over_z - v_over_z * triangle.gamma_ffy);
+						float dudx = one_over_squared_one_over_z
+							* (triangle.alpha_ffx * one_over_z - u_over_z * triangle.gamma_ffx);
+						float dudy = one_over_squared_one_over_z
+							* (triangle.beta_ffx * one_over_z - v_over_z * triangle.gamma_ffx);
+						float dvdx = one_over_squared_one_over_z
+							* (triangle.alpha_ffy * one_over_z - u_over_z * triangle.gamma_ffy);
+						float dvdy = one_over_squared_one_over_z
+							* (triangle.beta_ffy * one_over_z - v_over_z * triangle.gamma_ffy);
 
 						dudx *= texture.get().mipmaps[0].cols;
 						dudy *= texture.get().mipmaps[0].cols;
@@ -543,18 +573,25 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 						dvdy *= texture.get().mipmaps[0].rows;
 
 						// The Texture is in BGR, thus tex2D returns BGR
-						glm::tvec3<float> texture_color = detail::tex2d(texcoords_persp, texture.get(), dudx, dudy, dvdx, dvdy); // uses the current texture
+						glm::tvec3<float> texture_color = detail::tex2d(texcoords_persp,
+																		texture.get(),
+																		dudx,
+																		dudy,
+																		dvdx,
+																		dvdy); // uses the current texture
 						pixel_color = glm::tvec3<float>(texture_color[2], texture_color[1], texture_color[0]);
 						// other: color.mul(tex2D(texture, texCoord));
 						// Old note: for texturing, we load the texture as BGRA, so the colors get the wrong way in the next few lines...
 					}
-					else { // We use vertex-coloring
+					else
+					{ // We use vertex-coloring
 						// color_persp is in RGB
 						pixel_color = color_persp;
 					}
 
 					// clamp bytes to 255
-					const unsigned char red = static_cast<unsigned char>(255.0f * std::min(pixel_color[0], 1.0f)); // Todo: Proper casting (rounding?)
+					const unsigned char red = static_cast<unsigned char>(255.0f
+						* std::min(pixel_color[0], 1.0f)); // Todo: Proper casting (rounding?)
 					const unsigned char green = static_cast<unsigned char>(255.0f * std::min(pixel_color[1], 1.0f));
 					const unsigned char blue = static_cast<unsigned char>(255.0f * std::min(pixel_color[2], 1.0f));
 
@@ -569,6 +606,156 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 		}
 	}
 };
+
+#ifdef _OPENMP
+
+//	vector<detail::TriangleToRasterize> triangles_to_raster;
+inline void raster_triangle_parallel(vector<detail::TriangleToRasterize> triangles_to_raster, cv::Mat colourbuffer, cv::Mat depthbuffer, boost::optional<Texture> texture, bool enable_far_clipping)
+{
+	using cv::Vec2f;
+	using cv::Vec3f;
+
+	// these will be used for barycentric weights computation
+	for(int i = 0; i < triangles_to_raster.size(); i++)
+	{
+		auto triangle = triangles_to_raster[i];
+		const double one_over_v0ToLine12 = 1.0 / implicit_line(triangle.v0.position[0],
+															   triangle.v0.position[1],
+															   triangle.v1.position,
+															   triangle.v2.position);
+		const double one_over_v1ToLine20 = 1.0 / implicit_line(triangle.v1.position[0],
+															   triangle.v1.position[1],
+															   triangle.v2.position,
+															   triangle.v0.position);
+		const double one_over_v2ToLine01 = 1.0 / implicit_line(triangle.v2.position[0],
+															   triangle.v2.position[1],
+															   triangle.v0.position,
+															   triangle.v1.position);
+		// Fragment/pixel shader: Colour the pixel values
+		// buffer for alpha beta gamma
+		auto t1 = std::chrono::high_resolution_clock::now();
+		for (int yi = triangle.min_y; yi <= triangle.max_y; ++yi)
+		{
+			const float y = static_cast<float>(yi) + 0.5f;
+
+			for (int xi = triangle.min_x; xi <= triangle.max_x; ++xi)
+			{
+				// we want centers of pixels to be used in computations. Todo: Do we?
+				const float x = static_cast<float>(xi) + 0.5f;
+
+				// affine barycentric weights
+				double alpha = implicit_line(x, y, triangle.v1.position, triangle.v2.position) * one_over_v0ToLine12;
+				double beta = implicit_line(x, y, triangle.v2.position, triangle.v0.position) * one_over_v1ToLine20;
+				double gamma = implicit_line(x, y, triangle.v0.position, triangle.v1.position) * one_over_v2ToLine01;
+
+				// if pixel (x, y) is inside the triangle or on one of its edges
+				if (alpha >= 0 && beta >= 0 && gamma >= 0)
+				{
+					const int pixel_index_row = yi;
+					const int pixel_index_col = xi;
+
+					const double z_affine = alpha * static_cast<double>(triangle.v0.position[2])
+						+ beta * static_cast<double>(triangle.v1.position[2])
+						+ gamma * static_cast<double>(triangle.v2.position[2]);
+
+					bool draw = true;
+					if (enable_far_clipping)
+					{
+						if (z_affine > 1.0)
+						{
+							draw = false;
+						}
+					}
+					// The '<= 1.0' clips against the far-plane in NDC. We clip against the near-plane earlier.
+					//if (z_affine < depthbuffer.at<double>(pixelIndexRow, pixelIndexCol)/* && z_affine <= 1.0*/) // what to do in ortho case without n/f "squashing"? should we always squash? or a flag?
+					if (z_affine < depthbuffer.at<double>(pixel_index_row, pixel_index_col) && draw)
+					{
+						// perspective-correct barycentric weights
+						double d =
+							alpha * triangle.one_over_z0 + beta * triangle.one_over_z1 + gamma * triangle.one_over_z2;
+						d = 1.0 / d;
+						alpha *= d * triangle
+							.one_over_z0; // In case of affine cam matrix, everything is 1 and a/b/g don't get changed.
+						beta *= d * triangle.one_over_z1;
+						gamma *= d * triangle.one_over_z2;
+
+						// attributes interpolation
+						glm::tvec3<float> color_persp =
+							static_cast<float>(alpha) * triangle.v0.color + static_cast<float>(beta) * triangle.v1.color
+								+ static_cast<float>(gamma) * triangle.v2
+									.color; // Note: color might be empty if we use texturing and the shape-only model - but it works nonetheless? I think I set the vertex-colour to 127 in the shape-only model.
+						glm::tvec2<float> texcoords_persp = static_cast<float>(alpha) * triangle.v0.texcoords
+							+ static_cast<float>(beta) * triangle.v1.texcoords
+							+ static_cast<float>(gamma) * triangle.v2.texcoords;
+
+						glm::tvec3<float> pixel_color;
+						// Pixel Shader:
+						if (texture)
+						{ // We use texturing
+							// check if texture != NULL?
+							// partial derivatives (for mip-mapping)
+							const float u_over_z =
+								-(triangle.alphaPlane.a * x + triangle.alphaPlane.b * y + triangle.alphaPlane.d)
+									* triangle.one_over_alpha_c;
+							const float v_over_z =
+								-(triangle.betaPlane.a * x + triangle.betaPlane.b * y + triangle.betaPlane.d)
+									* triangle.one_over_beta_c;
+							const float one_over_z =
+								-(triangle.gammaPlane.a * x + triangle.gammaPlane.b * y + triangle.gammaPlane.d)
+									* triangle.one_over_gamma_c;
+							const float one_over_squared_one_over_z = 1.0f / std::pow(one_over_z, 2);
+
+							// partial derivatives of U/V coordinates with respect to X/Y pixel's screen coordinates
+							float dudx = one_over_squared_one_over_z
+								* (triangle.alpha_ffx * one_over_z - u_over_z * triangle.gamma_ffx);
+							float dudy = one_over_squared_one_over_z
+								* (triangle.beta_ffx * one_over_z - v_over_z * triangle.gamma_ffx);
+							float dvdx = one_over_squared_one_over_z
+								* (triangle.alpha_ffy * one_over_z - u_over_z * triangle.gamma_ffy);
+							float dvdy = one_over_squared_one_over_z
+								* (triangle.beta_ffy * one_over_z - v_over_z * triangle.gamma_ffy);
+
+							dudx *= texture.get().mipmaps[0].cols;
+							dudy *= texture.get().mipmaps[0].cols;
+							dvdx *= texture.get().mipmaps[0].rows;
+							dvdy *= texture.get().mipmaps[0].rows;
+
+							// The Texture is in BGR, thus tex2D returns BGR
+							glm::tvec3<float> texture_color = detail::tex2d(texcoords_persp,
+																			texture.get(),
+																			dudx,
+																			dudy,
+																			dvdx,
+																			dvdy); // uses the current texture
+							pixel_color = glm::tvec3<float>(texture_color[2], texture_color[1], texture_color[0]);
+							// other: color.mul(tex2D(texture, texCoord));
+							// Old note: for texturing, we load the texture as BGRA, so the colors get the wrong way in the next few lines...
+						}
+						else
+						{ // We use vertex-coloring
+							// color_persp is in RGB
+							pixel_color = color_persp;
+						}
+
+						// clamp bytes to 255
+						const unsigned char red = static_cast<unsigned char>(255.0f
+							* std::min(pixel_color[0], 1.0f)); // Todo: Proper casting (rounding?)
+						const unsigned char green = static_cast<unsigned char>(255.0f * std::min(pixel_color[1], 1.0f));
+						const unsigned char blue = static_cast<unsigned char>(255.0f * std::min(pixel_color[2], 1.0f));
+
+						// update buffers
+						colourbuffer.at<cv::Vec4b>(pixel_index_row, pixel_index_col)[0] = blue;
+						colourbuffer.at<cv::Vec4b>(pixel_index_row, pixel_index_col)[1] = green;
+						colourbuffer.at<cv::Vec4b>(pixel_index_row, pixel_index_col)[2] = red;
+						colourbuffer.at<cv::Vec4b>(pixel_index_row, pixel_index_col)[3] = 255; // alpha channel
+						depthbuffer.at<double>(pixel_index_row, pixel_index_col) = z_affine;
+					}
+				}
+			}
+		}
+	}
+};
+#endif // _OPENMP
 
 		} /* namespace detail */
 	} /* namespace render */
