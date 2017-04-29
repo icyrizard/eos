@@ -610,7 +610,7 @@ inline void raster_triangle(TriangleToRasterize triangle, cv::Mat colourbuffer, 
 #ifdef _OPENMP
 
 //	vector<detail::TriangleToRasterize> triangles_to_raster;
-inline void raster_triangle_parallel(vector<detail::TriangleToRasterize> triangles_to_raster, cv::Mat colourbuffer, cv::Mat depthbuffer, boost::optional<Texture> texture, bool enable_far_clipping)
+inline void raster_triangle_parallel(std::vector<detail::TriangleToRasterize> triangles_to_raster, cv::Mat colourbuffer, cv::Mat depthbuffer, boost::optional<Texture> texture, bool enable_far_clipping)
 {
 	using cv::Vec2f;
 	using cv::Vec3f;

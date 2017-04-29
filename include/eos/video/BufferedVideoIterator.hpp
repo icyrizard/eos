@@ -22,21 +22,25 @@
 #ifndef BUFFERED_VIDEO_ITERATOR_HPP_
 #define BUFFERED_VIDEO_ITERATOR_HPP_
 
+#include "eos/video/Keyframe.hpp"
+
 #include "opencv2/core/core.hpp"
 #include "opencv2/opencv.hpp"
 #include "opencv2/highgui/highgui.hpp"
-#include "eos/video/Keyframe.hpp"
 
 #include <string>
 #include <vector>
 #include <fstream>
 #include <thread>
+
 #include <mutex>
 #include <atomic>
 #include <unistd.h>
 
+#include <boost/thread/thread.hpp>
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/quaternion.hpp"
+
 
 using cv::Mat;
 using cv::Vec2f;
@@ -160,7 +164,7 @@ public:
 	 * @param frame
 	 * @return Keyframe
 	 */
-	Keyframe generate_new_keyframe(cv::Mat frame) {
+	Keyframe* generate_new_keyframe(cv::Mat frame) {
 		int frame_height = frame.rows;
 		int frame_width = frame.cols;
 
@@ -169,54 +173,68 @@ public:
 		auto landmark_mapper = reconstruction_data.landmark_mapper;
 		auto blendshapes = reconstruction_data.blendshapes;
 		auto morphable_model = reconstruction_data.morphable_model;
-
-		// Reached the end of the landmarks (only applicable for annotated videos):
-		if (reconstruction_data.landmark_list.size() <= total_frames) {
-			std::cout << "Reached end of landmarks(" <<
-					  reconstruction_data.landmark_list.size() <<
-					  "/" << total_frames << ")" << std::endl;
-
-			return Keyframe();
-		}
-
-		if (pca_shape_coefficients.empty()) {
-			pca_shape_coefficients.resize(num_shape_coefficients_to_fit);
-		}
-
-		// make a new one
-		std::vector<float> blend_shape_coefficients;
+		auto edge_topology = reconstruction_data.edge_topology;
+		auto ibug_contour = reconstruction_data.contour_landmarks;
+		auto model_contour = reconstruction_data.model_contour;
 
 		vector<cv::Vec4f> model_points;
 		vector<int> vertex_indices;
 		vector<cv::Vec2f> image_points;
 
-		 // current pca_coeff will be the mean for the first iterations.
-		auto mesh = fitting::generate_new_mesh(morphable_model, blendshapes, pca_shape_coefficients, blend_shape_coefficients);
+		// make a new one
+		std::vector<float> blend_shape_coefficients;
 
-		// Will yield model_points, vertex_indices and image_points
-		// todo: should this function not come from mesh?
-		core::get_landmark_coordinates(landmarks, landmark_mapper, mesh, model_points, vertex_indices, image_points);
+		if (pca_shape_coefficients.empty()) {
+			pca_shape_coefficients.resize(num_shape_coefficients_to_fit);
+		}
 
-		auto current_pose = fitting::estimate_orthographic_projection_linear(
-			image_points, model_points, true, frame_height);
-
-		fitting::RenderingParameters rendering_params(current_pose, frame_width, frame_height);
-		Mat affine_cam = fitting::get_3x4_affine_camera_matrix(rendering_params, frame_width, frame_height);
-
-		auto blendshapes_as_basis = morphablemodel::to_matrix(blendshapes);
-		auto current_pca_shape = morphable_model.get_shape_model().draw_sample(pca_shape_coefficients);
-		blend_shape_coefficients = fitting::fit_blendshapes_to_landmarks_nnls(
-				blendshapes, current_pca_shape, affine_cam, image_points, vertex_indices);
-		auto merged_shape = current_pca_shape + blendshapes_as_basis * Eigen::Map<const Eigen::VectorXf>(blend_shape_coefficients.data(),
-																	 blend_shape_coefficients.size());
-
-		auto merged_mesh = morphablemodel::sample_to_mesh(
-			merged_shape,
-			morphable_model.get_color_model().get_mean(),
-			morphable_model.get_shape_model().get_triangle_list(),
-			morphable_model.get_color_model().get_triangle_list(),
-			morphable_model.get_texture_coordinates()
+		auto mesh = fitting::generate_new_mesh(
+			morphable_model,
+			blendshapes,
+			pca_shape_coefficients, // current pca_coeff will be the mean for the first iterations.
+			blend_shape_coefficients
 		);
+
+		// Will yield model_points, vertex_indices and frame_points
+		// todo: should this function not come from mesh?
+
+		// set all fitting params we found for this Keyframe
+		fitting::FittingResult fitting_result;
+		fitting_result.landmarks = landmarks;
+
+		auto keyframe = Keyframe(0.0f, frame, fitting_result, total_frames);
+
+		std::vector<std::shared_ptr<Keyframe>> keyframes;
+		keyframes.push_back(std::make_shared<Keyframe>(keyframe));
+
+		vector<core::Mesh> meshs;
+		vector<fitting::RenderingParameters> rendering_paramss;
+		// List of blendshapes coefficients:
+		std::vector<std::vector<float>> blendshape_coefficients;
+		std::vector<std::vector<cv::Vec2f>> fitted_image_points;
+
+		std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_parallel(
+			morphable_model,
+			blendshapes,
+			keyframes,
+			landmark_mapper,
+			frame_width,
+			frame_height,
+			static_cast<int>(keyframes.size()),
+			edge_topology,
+			ibug_contour,
+			model_contour,
+			10, // get from settings, needs to be the same.
+			boost::none,
+			30.0f,
+			boost::none,
+			pca_shape_coefficients,
+			blendshape_coefficients,
+			fitted_image_points,
+			settings
+		);
+
+		auto curr_keyframe = keyframes[0].get();
 
 		// Render the model in a separate window using the estimated pose, shape and merged texture:
 		Mat rendering;
@@ -227,21 +245,23 @@ public:
 		// make sure the image is CV_8UC4, maybe do check first?
 		rendering.convertTo(rendering, CV_8UC4);
 		auto t1 = std::chrono::high_resolution_clock::now();
-		Mat isomap = render::extract_texture(merged_mesh, affine_cam, frame, true, render::TextureInterpolation::NearestNeighbour, 512);
+
+		cv::Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(curr_keyframe->fitting_result.rendering_parameters, frame_width, frame_height);
+		Mat isomap = render::extract_texture(curr_keyframe->fitting_result.mesh, affine_from_ortho, curr_keyframe->frame, true, render::TextureInterpolation::NearestNeighbour, 512);
 
 		// Merge the isomaps - add the current one to the already merged ones:
 		Mat merged_isomap = isomap_averaging.add_and_merge(isomap);
 		Mat frontal_rendering;
 
 		auto rot_mtx_y = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f ));
-		rendering_params.set_rotation(rot_mtx_y);
+		curr_keyframe->fitting_result.rendering_parameters.set_rotation(rot_mtx_y);
 
-		auto modelview_no_translation = rendering_params.get_modelview();
+		auto modelview_no_translation = curr_keyframe->fitting_result.rendering_parameters.get_modelview();
 		modelview_no_translation[3][0] = 0;
 		modelview_no_translation[3][1] = 0;
 
 		std::tie(frontal_rendering, std::ignore) = render::render(
-				merged_mesh,
+				curr_keyframe->fitting_result.mesh,
 				modelview_no_translation,
 				glm::ortho(-130.0f, 130.0f, -130.0f, 130.0f),
 				256, 256,
@@ -253,12 +273,10 @@ public:
 
 		cvtColor(frontal_rendering, frontal_rendering, CV_BGRA2BGR);
 
-		fitting::FittingResult fitting_result;
-		fitting_result.rendering_parameters = rendering_params;
-		fitting_result.landmarks = landmarks;
-		fitting_result.mesh = mesh;
+		curr_keyframe->frame = frontal_rendering;
 
-		return Keyframe(0.0f, frontal_rendering, fitting_result, total_frames);
+		return curr_keyframe;
+
 	}
 
 	/**
@@ -327,7 +345,7 @@ public:
 		}
 
 		// makes a copy of the frame
-		Keyframe keyframe = generate_new_keyframe(frame);
+		Keyframe *keyframe = generate_new_keyframe(frame);
 
 //		if(wireframe) {
 //			draw_wireframe(keyframe.frame, keyframe);
@@ -337,12 +355,12 @@ public:
 //			draw_landmarks(keyframe.frame, keyframe);
 //		}
 
-		writer.write(keyframe.frame);
+		writer.write(keyframe->frame);
 		total_frames++;
 
 		if (show_video) {
 			std::cout << "show video" << std::endl;
-			cv::imshow("video", keyframe.frame);
+			cv::imshow("video", keyframe->frame);
 			cv::waitKey(static_cast<int>((1.0 / fps) * 1000.0));
 		}
 
@@ -442,6 +460,7 @@ public:
 	int width;
 	int height;
 	int last_frame_number;
+
 	Keyframe last_keyframe;
 	std::unique_ptr<std::thread> frame_buffer_worker;
 
@@ -549,8 +568,8 @@ public:
 		// set all fitting params we found for this Keyframe
 		fitting::RenderingParameters rendering_params(current_pose, frame_width, frame_height);
 		fitting::FittingResult fitting_result;
-		fitting_result.rendering_parameters = rendering_params;
 		fitting_result.landmarks = landmarks;
+		fitting_result.rendering_parameters = rendering_params;
 
 		cv::Rect face_roi = core::get_face_roi(image_points, frame_width, frame_height);
 
@@ -568,9 +587,9 @@ public:
 	 * @param keyframe
 	 * @return
 	 */
-	bool try_add(Keyframe &keyframe) {
+	bool try_add(Keyframe keyframe) {
 		// Determine whether to add or not:
-		auto yaw_angle = glm::degrees(glm::yaw(keyframe.fitting_result.rendering_parameters.get_rotation()));
+		float yaw_angle = glm::degrees(glm::yaw(keyframe.fitting_result.rendering_parameters.get_rotation()));
 		auto idx = angle_to_index(yaw_angle);
 		bool add_frame = false;
 
@@ -581,13 +600,15 @@ public:
 			return false;
 		}
 
+		std::cout << "idx: " << idx << std::endl;
+
 		// always add when we don't have enough frames
 		if (bins[idx].size() < frames_per_bin) {
 			add_frame = true; // definitely adding - we wouldn't have to go through the for-loop on the next line.
 		}
 
 		for (auto&& f : bins[idx]) {
-			if (keyframe.score > f.score) {
+			if (keyframe.score > f.get()->score) {
 				add_frame = true;
 			}
 		}
@@ -597,12 +618,12 @@ public:
 		}
 
 		// Add the keyframe:
-		bins[idx].push_back(keyframe);
+		bins[idx].push_back(std::make_shared<Keyframe>(keyframe));
 		if (bins[idx].size() > frames_per_bin) {
 			n_frames--;
 			// need to remove the lowest one:
 			std::sort(std::begin(bins[idx]), std::end(bins[idx]),
-					  [](const auto& lhs, const auto& rhs) { return lhs.score > rhs.score; });
+					  [](const auto& lhs, const auto& rhs) { return lhs->score > rhs->score; });
 			bins[idx].resize(frames_per_bin);
 		}
 
@@ -622,9 +643,9 @@ public:
 			output.append("[");
 
 			for (auto&& f : b) {
-				std::size_t idx = angle_to_index(f.yaw_angle);
-				output.append("(" + std::to_string(f.score));
-				output.append("," + std::to_string(f.yaw_angle));
+				std::size_t idx = angle_to_index(f->yaw_angle);
+				output.append("(" + std::to_string(f->score));
+				output.append("," + std::to_string(f->yaw_angle));
 				output.append("), ");
 			}
 
@@ -639,8 +660,8 @@ public:
 	 *
 	 * @return std::vector<Keyframe>
 	 */
-	std::vector<Keyframe> get_keyframes() const {
-		std::vector<Keyframe> keyframes;
+	std::vector<std::shared_ptr<Keyframe>> get_keyframes() const {
+		std::vector<std::shared_ptr<Keyframe>> keyframes;
 		for (auto&& b : bins) {
 			for (auto&& f : b) {
 				keyframes.push_back(f);
@@ -655,7 +676,7 @@ public:
 	 *
 	 * @return
 	 */
-	std::vector<Keyframe> start() {
+	std::vector<std::shared_ptr<Keyframe>> start() {
 		// blocking calling next for the first time, stop if empty frame.
 		if (!next()) {
 			__stop();
@@ -809,7 +830,7 @@ private:
 	cv::VideoCapture cap;
 	eos::fitting::ReconstructionData reconstruction_data;
 
-	using BinContent = std::vector<Keyframe>;
+	using BinContent = std::vector<std::shared_ptr<Keyframe>>;
 	std::vector<BinContent> bins;
 
 	// latest pca_shape_coefficients

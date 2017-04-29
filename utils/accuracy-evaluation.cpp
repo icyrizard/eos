@@ -49,6 +49,7 @@ using eos::core::LandmarkCollection;
 using eos::video::BufferedVideoIterator;
 using eos::video::WeightedIsomapAveraging;
 using eos::video::ReconstructionVideoWriter;
+using eos::video::Keyframe;
 using cv::Mat;
 using cv::Vec2f;
 using cv::Vec3f;
@@ -164,7 +165,7 @@ void evaluate_accuracy(
 
 /**
  *
- * @param key_frames
+ * @param keyframes
  * @param rendering_paramss
  * @param landmark_list
  * @param morphable_model
@@ -179,7 +180,7 @@ void evaluate_accuracy(
  * @param n_iter
  */
 void render_output(
-		std::vector<eos::video::Keyframe> key_frames,
+		std::vector<std::shared_ptr<eos::video::Keyframe>> keyframes,
 		std::vector<fitting::RenderingParameters> rendering_paramss,
 		std::vector<core::LandmarkCollection<cv::Vec2f>> landmark_list,
 		vector<core::Mesh> meshs,
@@ -209,12 +210,12 @@ void render_output(
 
 	auto outputfilebase = annotations[0];
 
-	for (uint i = 0; i < key_frames.size(); ++i) {
-		Mat frame = key_frames[i].frame;
+	for (uint i = 0; i < keyframes.size(); ++i) {
+		Mat frame = keyframes[i].get()->frame;
 
 		auto unmodified_frame = frame.clone();
-		int frame_number = key_frames[i].frame_number;
-		float yaw_angle = key_frames[i].yaw_angle;// glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
+		int frame_number = keyframes[i].get()->frame_number;
+		float yaw_angle = keyframes[i].get()->yaw_angle;// glm::degrees(glm::yaw(rendering_paramss[i].get_rotation()));
 
 		cv::imwrite("/tmp/eos/" + std::to_string(frame_number) + "_" + std::to_string(yaw_angle) + ".png", frame);
 
@@ -325,7 +326,7 @@ void render_output(
 
 /**
  *
- * @param key_frames
+ * @param keyframes
  * @param rendering_paramss
  * @param landmark_list
  * @param morphable_model
@@ -339,8 +340,7 @@ void render_output(
  * @param settings
  * @param n_iter
  */
-void evaluate_results(
-		std::vector<eos::video::Keyframe> key_frames,
+void evaluate_results(std::vector<std::shared_ptr<eos::video::Keyframe>> keyframes,
 		std::vector<fitting::RenderingParameters> rendering_paramss,
 		vector<core::Mesh> meshs,
 		std::vector<float> pca_shape_coefficients,
@@ -350,6 +350,7 @@ void evaluate_results(
 		fitting::ReconstructionData reconstruction_data,
 		boost::property_tree::ptree settings,
 		int n_iter) {
+
 
 	std::string output_path = settings.get<std::string>("output.output_path", "/tmp");
 	float merge_isomap_face_angle = settings.get<float>("output.merge_isomap_face_angle", 60.f);
@@ -362,18 +363,17 @@ void evaluate_results(
 	auto blendshapes = reconstruction_data.blendshapes;
 	auto morphable_model = reconstruction_data.morphable_model;
 
-
 	// The 3D head pose can be recovered as follows:
-	for (uint i = 0; i < key_frames.size(); ++i) {
-		int frame_number = key_frames[i].frame_number;
-		auto landmarks = key_frames[i].fitting_result.landmarks;
-		auto rendering_params = key_frames[i].fitting_result.rendering_parameters;
-		float yaw_angle = key_frames[i].yaw_angle;
-
-		Mat frame = key_frames[i].frame;
+	for (uint i = 0; i < keyframes.size(); ++i) {
+		Mat frame = keyframes[i].get()->frame;
 
 		int frame_width = frame.cols;
 		int frame_height = frame.rows;
+
+		int frame_number = keyframes[i].get()->frame_number;
+		auto landmarks = keyframes[i].get()->fitting_result.landmarks;
+		auto rendering_params = keyframes[i].get()->fitting_result.rendering_parameters;
+		auto yaw_angle = glm::degrees(glm::yaw(rendering_params.get_rotation()));
 
 		Mat outimg = frame.clone();
 
@@ -384,26 +384,22 @@ void evaluate_results(
 
 		for (auto &&lm : landmarks) {
 			cv::rectangle(
-					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
+				outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
+				cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
 			);
 		}
+
 		// Draw the fitted mesh as wireframe, and save the image:
 		draw_wireframe(
 				outimg,
-				meshs[i],
+				keyframes[i].get()->fitting_result.mesh,
 				rendering_params.get_modelview(),
 				rendering_params.get_projection(),
 				fitting::get_opencv_viewport(frame_width, frame_height));
 
-//		bool eyes_open = isomap_averaging.has_eyes_open(frame, landmarks);
-//
-//		if (!eyes_open) {
-//			continue;
-//		}
 
-//		cv::imshow("Img", outimg);
-//		cv::waitKey(0);
+		cv::imshow("Img", outimg);
+		cv::waitKey(20);
 
 		// Draw the loaded landmarks:
 		Mat isomap = render::extract_texture(meshs[i], affine_from_ortho, frame);
@@ -411,89 +407,36 @@ void evaluate_results(
 		// merge the isomaps:
 		merged_isomap = isomap_averaging.add_and_merge(isomap);
 
-//		cv::imshow("isomap", isomap);
-//		cv::imshow("merged_isomap", merged_isomap);
-//
-//		Mat outimg = frame.clone();
-//
-//		for (auto &&lm : landmarks) {
-//			cv::rectangle(
-//					outimg, cv::Point2f(lm.coordinates[0] - 2.0f, lm.coordinates[1] - 2.0f),
-//					cv::Point2f(lm.coordinates[0], lm.coordinates[1] + 2.0f), {255, 0, 0}
-//			);
-//		}
-//		// Draw the fitted mesh as wireframe, and save the image:
-//		draw_wireframe(
-//				outimg,
-//				meshs[i],
-//				rendering_params.get_modelview(),
-//				rendering_params.get_projection(),
-//				fitting::get_opencv_viewport(frame_width, frame_height));
-//
-//		cv::imshow("Img", outimg);
-//		cv::waitKey(0);
-
-//		fs::path path = (fs::path(annotations[frame_number]).parent_path() / "eval");
-//		std::string outputfile = (path / fs::path(annotations[frame_number]).replace_extension("").filename()).string();
-//		std::string iter = "_" + std::to_string(n_iter) + "_" + std::to_string(i);
-//		cv::imwrite(outputfile + iter + ".annotated.png", outimg);
-//
-//		// save frontal rendering with texture:
-//		glm::mat4 modelview_frontal = glm::mat4( 1.0 );
-//		core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
-//				morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
-//				morphable_model.get_color_model().get_mean(),
-//				morphable_model.get_shape_model().get_triangle_list(),
-//				morphable_model.get_color_model().get_triangle_list(),
-//				morphable_model.get_texture_coordinates()
-//		);
-
-//		cv::imwrite(outputfile + iter + ".isomap.png", isomap);
-
-//		Mat frontal_rendering;
-//		std::tie(frontal_rendering, std::ignore) = eos::render::render(
-//				neutral_expression,
-//				rendering_params.get_modelview(),
-//				rendering_params.get_projection(),
-//				frame_width,
-//				frame_height,
-//				render::create_mipmapped_texture(merged_isomap),
-//				true,
-//				false,
-//				false
-//		);
-
-//		cv::imwrite(outputfile + iter + ".frontal.png", frontal_rendering);
-//		evaluate_accuracy(
-//			landmarks,
-//			landmark_mapper,
-//			meshs[i],
-//			affine_from_ortho,
-//			settings
-//		);
+		evaluate_accuracy(
+			landmarks,
+			landmark_mapper,
+			meshs[i],
+			affine_from_ortho,
+			settings
+		);
 	}
 
 	// save the merged isomap:
-	std::string iter = "_" + std::to_string(n_iter);
-	fs::path path = (fs::path(annotations[n_iter]).parent_path() / "eval");
-	fs::create_directory(path);
-	std::string outputfile = (path / fs::path(annotations[n_iter]).replace_extension("").filename()).string();
-
-	// sharpen isomap
-	Mat sharpen = isomap_averaging.sharpen(merged_isomap);
-
-	cv::imwrite(outputfile + iter + ".isomap.png", sharpen);
-
-	// save the frontal rendering with merged isomap:
-	Mat frontal_rendering;
-	glm::mat4 modelview_frontal = glm::mat4( 1.0 );
-	core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
-			morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
-			morphable_model.get_color_model().get_mean(),
-			morphable_model.get_shape_model().get_triangle_list(),
-			morphable_model.get_color_model().get_triangle_list(),
-			morphable_model.get_texture_coordinates()
-	);
+//	std::string iter = "_" + std::to_string(n_iter);
+//	fs::path path = (fs::path(annotations[n_iter]).parent_path() / "eval");
+//	fs::create_directory(path);
+//	std::string outputfile = (path / fs::path(annotations[n_iter]).replace_extension("").filename()).string();
+//
+//	// sharpen isomap
+//	Mat sharpen = isomap_averaging.sharpen(merged_isomap);
+//
+//	cv::imwrite(outputfile + iter + ".isomap.png", sharpen);
+//
+//	// save the frontal rendering with merged isomap:
+//	Mat frontal_rendering;
+//	glm::mat4 modelview_frontal = glm::mat4( 1.0 );
+//	core::Mesh neutral_expression = morphablemodel::sample_to_mesh(
+//			morphable_model.get_shape_model().draw_sample(pca_shape_coefficients),
+//			morphable_model.get_color_model().get_mean(),
+//			morphable_model.get_shape_model().get_triangle_list(),
+//			morphable_model.get_color_model().get_triangle_list(),
+//			morphable_model.get_texture_coordinates()
+//	);
 
 //	std::tie(frontal_rendering, std::ignore) = render::render(
 //			neutral_expression,
@@ -508,8 +451,8 @@ void evaluate_results(
 //	cv::imwrite(outputfile + iter + ".merged_frontal.png", frontal_rendering);
 
 	// Save the mesh as textured obj:
-	core::write_textured_obj(neutral_expression, outputfile + iter + ".obj");
-	std::cout << "Finished fitting and wrote result mesh and isomap to files with basename " << outputfile + iter + ".obj" << std::endl;
+//	core::write_textured_obj(neutral_expression, outputfile + iter + ".obj");
+//	std::cout << "Finished fitting and wrote result mesh and isomap to files with basename " << outputfile + iter + ".obj" << std::endl;
 }
 
 /**
@@ -530,16 +473,17 @@ boost::property_tree::ptree get_reconstruction_config(std::string filename) {
  * causes un-alignment of the total landmarks list and the list of frames. This samples the correct landmark
  * annotations with the based on a given keyframe list.
  *
- * @param key_frames
+ * @param keyframes
  * @param landmarks
  * @return
  */
 vector<core::LandmarkCollection<cv::Vec2f>> sample_landmarks(
-		std::vector<eos::video::Keyframe> key_frames, vector<core::LandmarkCollection<cv::Vec2f>> landmarks) {
+	std::vector<std::shared_ptr<eos::video::Keyframe>> keyframes, vector<core::LandmarkCollection<cv::Vec2f>> landmarks) {
+
 	vector<core::LandmarkCollection<cv::Vec2f>> sublist;
 
-	for (auto& f : key_frames) {
-		sublist.push_back(landmarks[f.frame_number]);
+	for (auto& f : keyframes) {
+		sublist.push_back(landmarks[f.get()->frame_number]);
 	}
 
 	return sublist;
@@ -668,7 +612,13 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Start getting video frames:
-	vid_iterator.start();
+	bool use_pose_binning = settings.get<bool>("frames.use_pose_binning", true);
+
+	if (use_pose_binning) {
+		vid_iterator.start();
+	}
+
+
 	ReconstructionVideoWriter vid_writer;
 	try {
 		vid_writer = ReconstructionVideoWriter(videofile.string(), reconstruction_data, settings);
@@ -683,26 +633,34 @@ int main(int argc, char *argv[]) {
 	// Count the amount of iterations:
 	int n_iter = 0;
 
-	while(vid_iterator.is_playing()) {
-		auto key_frames = vid_iterator.get_keyframes();
+	while(vid_iterator.is_playing() || n_iter < 20) {
+		std::vector<std::shared_ptr<Keyframe>> keyframes;
+
+		if (use_pose_binning) {
+			keyframes = vid_iterator.get_keyframes();
+		} else {
+			vid_iterator.next();
+			keyframes.push_back(std::make_shared<Keyframe>(vid_iterator.get_last_keyframe()));
+		}
+
 
 		// Generate a sublist of the total available landmark list:
-		auto landmark_sublist = sample_landmarks(key_frames, landmark_list);
+		auto landmark_sublist = sample_landmarks(keyframes, landmark_list);
 
 		// it makes no sense to update pca_coeff if nothing in the buffer has changed:
-		if (vid_iterator.has_changed()) {
-			std::cout << "Going to reconstruct with " << key_frames.size() << " images."<< num_iterations << std::endl;
+		if (vid_iterator.has_changed() || use_pose_binning == false) {
+			std::cout << "Going to reconstruct with " << keyframes.size() << " images."<< num_iterations << std::endl;
 
 			// Fit shape and pose:
 			auto t1 = std::chrono::high_resolution_clock::now();
 			std::tie(meshs, rendering_paramss) = fitting::fit_shape_and_pose_multi_parallel(
 				morphable_model,
 				blendshapes,
-				key_frames,
+				keyframes,
 				landmark_mapper,
-				key_frames[0].frame.cols,
-				key_frames[0].frame.rows,
-				static_cast<int>(key_frames.size()),
+				keyframes[0].get()->frame.cols,
+				keyframes[0].get()->frame.rows,
+				static_cast<int>(keyframes.size()),
 				edge_topology,
 				ibug_contour,
 				model_contour,
@@ -716,39 +674,45 @@ int main(int argc, char *argv[]) {
 				settings
 			);
 
+			std::cout << vid_iterator.to_string() << std::endl;
+
 			auto t2 = std::chrono::high_resolution_clock::now();
 			std::cout << "Reconstruction took "
 					  << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count()
-					  << "ms, mean(" << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() / (key_frames.size() * num_iterations)
+					  << "ms, mean(" << std::chrono::duration_cast<std::chrono::milliseconds>(t2-t1).count() / (keyframes.size() * num_iterations)
 					  << "ms)" << std::endl;
+//
+//			if(settings.get<bool>("output.make_video", false)) {
+//				vid_writer.update_reconstruction_coeff(pca_shape_coefficients);
+//				vid_writer.next();
+//			}
 
-			if(settings.get<bool>("output.make_video", false)) {
-				vid_writer.update_reconstruction_coeff(pca_shape_coefficients);
-				vid_writer.next();
-			}
-
-//			evaluate_results(
-//				key_frames,
-//				rendering_paramss,
-//				meshs,
-//				pca_shape_coefficients,
-//				blendshape_coefficients,
-//				fitted_image_points,
-//				annotations,
-//				reconstruction_data,
-//				settings,
-//				n_iter
-//			);
+			evaluate_results(
+				keyframes,
+				rendering_paramss,
+				meshs,
+				pca_shape_coefficients,
+				blendshape_coefficients,
+				fitted_image_points,
+				annotations,
+				reconstruction_data,
+				settings,
+				n_iter
+			);
 
 		} else {
-//			std::cout << "No reconstruction - buffer did not change" << std::endl;
+			std::cout << vid_iterator.to_string() << std::endl;
+			std::cout << "No reconstruction - buffer did not change" << std::endl;
 		}
 
+		std::cout << n_iter << std::endl;
 		// Get new frames:
 		n_iter++;
 	}
 
-//	vid_writer.__stop();
+	std::cout << "stopping?" << std::endl;
+
+	vid_writer.__stop();
 //	if(settings.get<bool>("output.make_video", false)) {
 //		// Render output:
 //		std::cout << "Waiting for video to be completed..." << std::endl;
@@ -768,20 +732,20 @@ int main(int argc, char *argv[]) {
 //		vid_writer.__stop();
 //	}
 
-	auto key_frames = vid_iterator.get_keyframes();
-
-	evaluate_results(
-		key_frames,
-		rendering_paramss,
-		meshs,
-		pca_shape_coefficients,
-		blendshape_coefficients,
-		fitted_image_points,
-		annotations,
-		reconstruction_data,
-		settings,
-		n_iter
-	);
+//	auto keyframes = vid_iterator.get_keyframes();
+//
+//	evaluate_results(
+//		keyframes,
+//		rendering_paramss,
+//		meshs,
+//		pca_shape_coefficients,
+//		blendshape_coefficients,
+//		fitted_image_points,
+//		annotations,
+//		reconstruction_data,
+//		settings,
+//		n_iter
+//	);
 
 	//todo: we could build our final obj here?
 

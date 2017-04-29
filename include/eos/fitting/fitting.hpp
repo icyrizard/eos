@@ -880,7 +880,6 @@ inline eos::core::Mesh generate_new_mesh(
 	return mesh;
 }
 
-
 inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParameters>> fit_shape_and_pose_multi_2(
 	const morphablemodel::MorphableModel& morphable_model,
 	const std::vector<morphablemodel::Blendshape>& blendshapes,
@@ -1128,7 +1127,8 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParameters>> fit_shape_and_pose_multi_parallel(
 	const morphablemodel::MorphableModel& morphable_model,
 	const std::vector<morphablemodel::Blendshape>& blendshapes,
-	std::vector<eos::video::Keyframe>& keyframes,
+	std::vector<std::shared_ptr<eos::video::Keyframe>> keyframes,
+//	std::vector<eos::video::Keyframe>& keyframes,
 	const core::LandmarkMapper& landmark_mapper,
 	int image_width,
 	int image_height,
@@ -1224,7 +1224,7 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 			// (equal to landmark coordinates), for every image / mesh.
 			std::tie(curr_model_points, curr_vertex_indices, curr_image_points) =
 				eos::core::get_landmark_coordinates<Vec2f, Vec4f>(
-					keyframes[j].fitting_result.landmarks, landmark_mapper, current_mesh);
+					keyframes[j].get()->fitting_result.landmarks, landmark_mapper, current_mesh);
 
 			// Start constructing a list of rendering parameters needed for reconstruction.
 			// Get the current points from the last added image points and model points
@@ -1233,9 +1233,6 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 
 			fitting::RenderingParameters current_rendering_params(current_pose, image_width, image_height);
 			rendering_params[j] = current_rendering_params;
-
-			// update key frame rendering params
-			keyframes[j].fitting_result.rendering_parameters = current_rendering_params;
 
 			Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(current_rendering_params, image_width, image_height);
 
@@ -1289,8 +1286,8 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 				vector<Vec2f> image_points_contour;
 				vector<int> vertex_indices_contour;
 
-				auto curr_keyframe = keyframes[j];
-				auto landmarks = curr_keyframe.fitting_result.landmarks;
+				auto curr_keyframe = keyframes[j].get();
+				auto landmarks = curr_keyframe->fitting_result.landmarks;
 				auto yaw_angle = glm::degrees(glm::eulerAngles(rendering_params[j].get_rotation())[1]);
 
 				// For each 2D contour landmark, get the corresponding 3D vertex point and vertex id:
@@ -1332,95 +1329,6 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 				VectorXf current_mean_plus_blendshapes = morphable_model.get_shape_model().get_mean() + blendshapes_as_basis * Eigen::Map<const Eigen::VectorXf>(blendshape_coefficients[j].data(),blendshape_coefficients[j].size());
 				mean_plus_blendshapes.push_back(current_mean_plus_blendshapes);
 			}
-				// Given the current pose, find 2D-3D contour correspondences of the front-facing face contour:
-//				vector<Vec2f> image_points_contour;
-//				vector<int> vertex_indices_contour;
-//
-//				auto curr_keyframe = keyframes[j];
-//				auto landmarks = curr_keyframe.fitting_result.landmarks;
-//				auto yaw_angle = glm::degrees(glm::eulerAngles(rendering_params[j].get_rotation())[1]);
-//
-//				// For each 2D contour landmark, get the corresponding 3D vertex point and vertex id:
-//				std::tie(image_points_contour, std::ignore, vertex_indices_contour) =
-//					fitting::get_contour_correspondences(
-//						landmarks,
-//						contour_landmarks,
-//						model_contour,
-//						yaw_angle,
-//						current_meshs[j],
-//						rendering_params[j].get_modelview(),
-//						rendering_params[j].get_projection(),
-//						fitting::get_opencv_viewport(image_width, image_height)
-//					);
-//
-//				// Add the contour correspondences to the set of landmarks that we use for the fitting:
-//				vertex_indices[j] = fitting::concat(vertex_indices[j], vertex_indices_contour);
-//				image_points[j] = fitting::concat(image_points[j], image_points_contour);
-//
-//				// Fit the occluding (away-facing) contour using the detected contour LMs:
-//				vector<Eigen::Vector2f> occluding_contour_landmarks;
-//
-//				// positive yaw = subject looking to the left
-//				if (yaw_angle >= 0.0f)
-//				{
-//					// the left contour is the occluding one we want to use ("away-facing")
-//					auto contour_landmarks_ =
-//						core::filter(landmarks, contour_landmarks.left_contour); // Can do this outside of the loop
-//					std::for_each(begin(contour_landmarks_),
-//								  end(contour_landmarks_),
-//								  [&occluding_contour_landmarks](auto &&lm)
-//								  {
-//									  occluding_contour_landmarks.push_back({lm.coordinates[0], lm.coordinates[1]});
-//								  });
-//				}
-//				else
-//				{
-//					auto contour_landmarks_ = core::filter(landmarks, contour_landmarks.right_contour);
-//					std::for_each(begin(contour_landmarks_),
-//								  end(contour_landmarks_),
-//								  [&occluding_contour_landmarks](auto &&lm)
-//								  {
-//									  occluding_contour_landmarks.push_back({lm.coordinates[0], lm.coordinates[1]});
-//								  });
-//				}
-//
-//				auto edge_correspondences = fitting::find_occluding_edge_correspondences_parallel(
-//					current_meshs[j], edge_topology, rendering_params[j], occluding_contour_landmarks, 180.0f
-//				);
-//
-//				image_points[j] = fitting::concat(image_points[j], edge_correspondences.first);
-//				vertex_indices[j] = fitting::concat(vertex_indices[j], edge_correspondences.second);
-//
-//				// Get the model points of the current mesh, for all correspondences that we've got:
-//				model_points[j].clear();
-//
-//				for (const auto &v : vertex_indices[j])
-//				{
-//					model_points[j].push_back(
-//						{
-//							current_meshs[j].vertices[v][0],
-//							current_meshs[j].vertices[v][1],
-//							current_meshs[j].vertices[v][2],
-//							current_meshs[j].vertices[v][3]
-//						});
-//				}
-//
-//				// Re-estimate the pose, using all correspondences:
-//				auto current_pose = fitting::estimate_orthographic_projection_linear(image_points[j],
-//																					 model_points[j],
-//																					 true,
-//																					 image_height);
-//				rendering_params[j] = fitting::RenderingParameters(current_pose, image_width, image_height);
-//
-//				Mat affine_from_ortho =
-//					fitting::get_3x4_affine_camera_matrix(rendering_params[j], image_width, image_height);
-//				affine_from_orthos.push_back(affine_from_ortho);
-//
-//				// Estimate the PCA shape coefficients with the current blendshape coefficients:
-//				VectorXf current_mean_plus_blendshapes = morphable_model.get_shape_model().get_mean() +
-//					blendshapes_as_basis * Eigen::Map<const Eigen::VectorXf>(blendshape_coefficients[j].data(),
-//																			 blendshape_coefficients[j].size());
-//				mean_plus_blendshapes.push_back(current_mean_plus_blendshapes);
 
 			pca_shape_coefficients = fitting::fit_shape_to_landmarks_linear_multi_parallel(
 				morphable_model,
@@ -1457,8 +1365,8 @@ inline std::pair<std::vector<core::Mesh>, std::vector<fitting::RenderingParamete
 
 				// save it to the keyframe, we might need it for showing the reconstruction.
 				// we could make it optional
-				keyframes[j].fitting_result.mesh = current_meshs[j];
-				keyframes[j].fitting_result.rendering_parameters = rendering_params[j];
+				keyframes[j].get()->fitting_result.mesh = current_meshs[j];
+				keyframes[j].get()->fitting_result.rendering_parameters = rendering_params[j];
 			}
 
 			}
