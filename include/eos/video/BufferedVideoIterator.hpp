@@ -460,6 +460,7 @@ public:
 	int width;
 	int height;
 	int last_frame_number;
+	bool add_random;
 
 	Keyframe last_keyframe;
 	std::unique_ptr<std::thread> frame_buffer_worker;
@@ -488,6 +489,8 @@ public:
 		skip_frames = settings.get<int>("frames.skip_frames", 0);
 		frames_per_bin = settings.get<unsigned int>("frames.frames_per_bin", 2);
 
+		add_random = settings.get<bool>("frames.add_random", false);
+
 		this->reconstruction_data = reconstruction_data;
 		unsigned int num_shape_coeff = reconstruction_data.
 			morphable_model.get_shape_model().get_num_principal_components();
@@ -501,6 +504,17 @@ public:
 		// reset frame count (to be sure)
 		n_frames = 0;
 		total_frames = 0;
+		frames_dropped = 0;
+
+		Mat frame;
+
+		// Get the first frame to see, sometimes frames are empty at the start, keep reading until we hit one.
+		while(frame.empty() || total_frames < skip_frames) {
+			cap.read(frame);
+			total_frames++;
+		}
+
+		std::cout << "Starting at video at frame:" << total_frames << std::endl;
 
 //		std::cout << "Settings: " << std::endl <<
 //			"min_frames: " << min_frames << std::endl <<
@@ -572,9 +586,106 @@ public:
 		fitting_result.rendering_parameters = rendering_params;
 
 		cv::Rect face_roi = core::get_face_roi(image_points, frame_width, frame_height);
-
 		float frame_laplacian_score = static_cast<float>(variance_of_laplacian(frame(face_roi)));
+
 		return Keyframe(frame_laplacian_score, frame, fitting_result, total_frames);
+	}
+
+
+	/**
+	 * Fill the buffer by iterating through the video until the very last frame.
+	 */
+	void video_iterator() {
+		// Go and fill the buffer with more frames while we are reconstructing.
+		while (next()) { }
+
+		// stop the video
+		__stop();
+
+		std::cout << "Video stopped at:" << total_frames << " frames - in buff " << n_frames <<  std::endl;
+	};
+
+	Keyframe get_last_keyframe() {
+		return last_keyframe;
+	};
+
+	bool try_add_random(Keyframe keyframe) {
+		// Determine whether to add or not:
+		float yaw_angle = glm::degrees(glm::yaw(keyframe.fitting_result.rendering_parameters.get_rotation()));
+		auto idx = angle_to_index(yaw_angle);
+		bool add_frame = false;
+
+		keyframe.yaw_angle = yaw_angle;
+
+		// Score is 0 for total black frames, we don't want those:
+		if (keyframe.score == 0) {
+			return false;
+		}
+
+		// only add when the look at the camera
+		if (idx == 3 || idx == 4) {
+			add_frame = true;
+		}
+
+		if (!add_frame) {
+			return false;
+		}
+
+		// Add the keyframe:
+		bins[idx].push_back(std::make_shared<Keyframe>(keyframe));
+		if (bins[idx].size() > frames_per_bin) {
+			n_frames--;
+			// need to remove the lowest one:
+			std::sort(std::begin(bins[idx]), std::end(bins[idx]),
+					  [](const auto& lhs, const auto& rhs) { return lhs->score > rhs->score; });
+			bins[idx].resize(frames_per_bin);
+		}
+
+		return true;
+	}
+
+	Keyframe next_key_frame() {
+		Mat frame = __get_new_frame();
+		auto keyframe = generate_new_keyframe(frame);
+
+		return keyframe;
+	}
+
+	/**
+	 *
+	 * Set next frame and return frame_buffer. Returns true or false if the next frame is empty.
+	 * Empty frames mean that we reached the end of the video stream (i.e., file or camera).
+	 *
+	 * @return bool if
+	 */
+	bool next() {
+		Mat frame = __get_new_frame();
+
+		if (frame.empty()) {
+			return false;
+		}
+
+		// TODO: only calculate lapscore within the bounding box of the face.
+		auto keyframe = generate_new_keyframe(frame);
+		bool frame_added = try_add(keyframe);
+
+		// Added or not, we put this as the last keyframe
+		last_keyframe = keyframe;
+
+		if(frame_added) {
+			n_frames++;
+			// Setting that the buffer has changed:
+			frame_buffer_changed = true;
+		}
+
+		total_frames++;
+
+		// fill up the buffer until we hit the minimum frames we want in the buffer.
+		if(n_frames < min_frames) {
+			return next();
+		}
+
+		return true;
 	}
 
 	/**
@@ -599,8 +710,6 @@ public:
 		if (keyframe.score == 0) {
 			return false;
 		}
-
-		std::cout << "idx: " << idx << std::endl;
 
 		// always add when we don't have enough frames
 		if (bins[idx].size() < frames_per_bin) {
@@ -689,62 +798,6 @@ public:
 		return get_keyframes();
 	}
 
-	/**
-	 * Fill the buffer by iterating through the video until the very last frame.
-	 */
-	void video_iterator() {
-		// Go and fill the buffer with more frames while we are reconstructing.
-		while (next()) { }
-
-		// stop the video
-		__stop();
-
-		std::cout << "Video stopped at:" << total_frames << " frames - in buff " << n_frames <<  std::endl;
-	};
-
-	Keyframe get_last_keyframe() {
-		return last_keyframe;
-	};
-
-	 /**
-	  *
-	  * Set next frame and return frame_buffer. Returns true or false if the next frame is empty.
-	  * Empty frames mean that we reached the end of the video stream (i.e., file or camera).
-	  *
-	  * @return bool if
-	  */
-	bool next() {
-		Mat frame = __get_new_frame();
-
-		if (frame.empty()) {
-			return false;
-		}
-
-		// keep the last frame here, so we can play a video subsequently:
-		last_frame_number = total_frames;
-
-		// TODO: only calculate lapscore within the bounding box of the face.
-		auto keyframe = generate_new_keyframe(frame);
-		bool frame_added = try_add(keyframe);
-
-		// Added or not, we put this as the last keyframe
-		last_keyframe = keyframe;
-
-		if(frame_added) {
-			n_frames++;
-			// Setting that the buffer has changed:
-			frame_buffer_changed = true;
-		}
-
-		total_frames++;
-
-		// fill up the buffer until we hit the minimum frames we want in the buffer.
-		if(n_frames < min_frames) {
-			return next();
-		}
-
-		return true;
-	}
 
 	/**
 	 * Update pca shape coeff. Probably we need to make something with a mutex, for updating and reading
@@ -855,6 +908,8 @@ private:
 
 	// Note: these settings are for future use
 	int drop_frames = 0;
+
+	int frames_dropped = 0;
 
 	unsigned int num_shape_coefficients_to_fit = 0;
 };

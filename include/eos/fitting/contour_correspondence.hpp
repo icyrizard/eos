@@ -72,7 +72,7 @@ struct ModelContour
 
 	// We store r/l separately because we currently only fit to the contour facing the camera.
 	// Also if we were to fit to the whole contour: Be careful not to just fit to the closest. The 
-	// "invisible" ones behind might be closer on an e.g 90° angle. Store CNT for left/right side separately?
+	// "invisible" ones behind might be closer on an e.g 90ï¿½ angle. Store CNT for left/right side separately?
 	
 	/**
 	 * Helper method to load a ModelContour from
@@ -226,7 +226,7 @@ inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<in
  * have different size. 
  * Correspondence can be established using get_nearest_contour_correspondences().
  *
- * If the yaw angle is between +-7.5°, both contours will be selected.
+ * If the yaw angle is between +-7.5ï¿½, both contours will be selected.
  *
  * Note: Maybe rename to find_nearest_contour_points, to highlight that there is (potentially a lot) computational cost involved?
  *
@@ -251,7 +251,7 @@ std::pair<std::vector<std::string>, std::vector<int>> select_contour(float yaw_a
 		model_contour_indices.insert(end(model_contour_indices), begin(model_contour.left_contour), end(model_contour.left_contour));
 		contour_landmark_identifiers.insert(end(contour_landmark_identifiers), begin(contour_landmarks.left_contour), end(contour_landmarks.left_contour));
 	}
-	// Note there's an overlap between the angles - if a subject is between +- 7.5°, both contours get added.
+	// Note there's an overlap between the angles - if a subject is between +- 7.5ï¿½, both contours get added.
 	return std::make_pair(contour_landmark_identifiers, model_contour_indices);
 };
 
@@ -273,7 +273,7 @@ std::pair<std::vector<std::string>, std::vector<int>> select_contour(float yaw_a
  * @param[in] viewport Current viewport to use.
  * @return A tuple with the 2D contour landmark points, the corresponding points in the 3D shape model and their vertex indices.
  */
-inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>> get_nearest_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const std::vector<std::string>& landmark_contour_identifiers, const std::vector<int>& model_contour_indices, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport)
+inline std::tuple<std::vector<cv::Vec2f>, std::vector<cv::Vec4f>, std::vector<int>>  get_nearest_contour_correspondences(const core::LandmarkCollection<cv::Vec2f>& landmarks, const std::vector<std::string>& landmark_contour_identifiers, const std::vector<int>& model_contour_indices, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport)
 {
 	// These are the additional contour-correspondences we're going to find and then use!
 	std::vector<cv::Vec4f> model_points_cnt; // the points in the 3D shape model

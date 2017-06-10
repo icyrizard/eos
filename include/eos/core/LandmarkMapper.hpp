@@ -120,6 +120,31 @@ public:
 	};
 
 	/**
+	 * @brief Converts the given landmark name to the mapped name.
+	 *
+	 * @param[in] landmark_name A landmark name to convert.
+	 * @return The mapped landmark name if a mapping exists, an empty optional otherwise.
+	 * @throws out_of_range exception if there is no mapping
+	 *         for the given landmarkName.
+	 */
+	std::string get_vertex_id(std::string landmark_name) const {
+		if (landmark_mappings.empty()) {
+			// perform identity mapping, i.e. return the input
+			return landmark_name;
+		}
+		else {
+			auto&& converted_landmark = landmark_mappings.find(landmark_name);
+			if (converted_landmark != std::end(landmark_mappings)) {
+				// landmark mapping found, return it
+				return converted_landmark->second;
+			}
+			else { // landmark_name does not match the key of any element in the map
+				return "";
+			}
+		}
+	};
+
+	/**
 	 * @brief Returns the number of loaded landmark mappings.
 	 *
 	 * @return The number of landmark mappings.

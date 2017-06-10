@@ -65,6 +65,7 @@ PYBIND11_PLUGIN(eos) {
 				new (&instance) core::LandmarkMapper(filename);
 			}, "Constructs a new landmark mapper from a file containing mappings from one set of landmark identifiers to another.", py::arg("filename"))
 		// We can't expose the convert member function yet - need std::optional (or some trick with self/this and a lambda)
+		.def("get_vertex_id", &core::LandmarkMapper::get_vertex_id, "Returns the vertex id given a landmark name")
 		;
 
 	py::class_<core::Mesh>(core_module, "Mesh", "This class represents a 3D mesh consisting of vertices, vertex colour information and texture coordinates.")
@@ -187,12 +188,21 @@ PYBIND11_PLUGIN(eos) {
 
 	py::class_<fitting::ContourLandmarks>(fitting_module, "ContourLandmarks", "Defines which 2D landmarks comprise the right and left face contour.")
 		.def_static("load", &fitting::ContourLandmarks::load, "Helper method to load contour landmarks from a text file with landmark mappings, like ibug_to_sfm.txt.", py::arg("filename"))
+//		.def("get_contour_landmarks", [](const fitting::RenderingParameters& rendering_params, const core::LandmarkCollection<cv::Vec2f>& landmarks, const fitting::ContourLandmarks& contour_landmarks, const fitting::ModelContour& model_contour, float yaw_angle, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::vec4& viewport) {
+//			cv::Mat affine_from_ortho = fitting::get_3x4_affine_camera_matrix(rendering_params, width, heightG;
+//		}, "Get contour landmarks", py::arg("morphable_model"), py::arg("landmarks"), py::arg("contour_landmarks"), py::arg("model_contour"), py::arg("yaw_angle"), py::arg("mesh"), py::arg("view_model"), py::arg("ortho_projection"), py::arg("contour_landmarks"), py::arg("model_contour"), py::arg("num_iterations") = 5, py::arg("num_shape_coefficients_to_fit") = -1, py::arg("lambda") = 30.0f);
 		;
 
 	py::class_<fitting::ModelContour>(fitting_module, "ModelContour", "Definition of the vertex indices that define the right and left model contour.")
 		.def_static("load", &fitting::ModelContour::load, "Helper method to load a ModelContour from a json file from the hard drive.", py::arg("filename"))
 		;
-	
+
+//	fitting_module.def("get_contour_landmarks", [](
+//		const core::LandmarkCollection<cv::Vec2f>& landmarks, const ContourLandmarks& contour_landmarks, const ModelContour& model_contour, float yaw_angle, const core::Mesh& mesh, const glm::mat4x4& view_model, const glm::mat4x4& ortho_projection, const glm::vec4& viewport) {
+//
+//	}, "Get contour landmarks");
+
+
 	fitting_module.def("fit_shape_and_pose", [](const morphablemodel::MorphableModel& morphable_model, const std::vector<morphablemodel::Blendshape>& blendshapes, const std::vector<glm::vec2>& landmarks, const std::vector<std::string>& landmark_ids, const core::LandmarkMapper& landmark_mapper, int image_width, int image_height, const morphablemodel::EdgeTopology& edge_topology, const fitting::ContourLandmarks& contour_landmarks, const fitting::ModelContour& model_contour, int num_iterations, int num_shape_coefficients_to_fit, float lambda) {
 			assert(landmarks.size() == landmark_ids.size());
 			std::vector<float> pca_coeffs;

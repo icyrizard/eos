@@ -193,12 +193,19 @@ namespace eos {
 	 * @param landmarks
 	 * @return
 	 */
-		cv::Rect get_face_roi(vector<Vec2f>image_points, int image_width, int image_height) {
+		cv::Rect get_face_roi(vector<cv::Vec2f>image_points, int image_width, int image_height) {
 			cv::Rect bbox = cv::boundingRect(image_points);
+
+			// sometimes the bbox starts outside the image boundaries due to wrong image points.
+			bbox.x = bbox.x < 0 ? 0 : bbox.x;
+			bbox.y = bbox.y < 0 ? 0 : bbox.y;
 
 			// cap on the image width and height.
 			bbox.width = bbox.x + bbox.width < image_width ? bbox.width: image_width - bbox.x - 1;
 			bbox.height = bbox.y + bbox.height < image_height ? bbox.height: image_height - bbox.y - 1;
+
+			assert(bbox.x + bbox.width < image_width);
+			assert(bbox.y + bbox.height < image_height);
 
 			return bbox;
 		}

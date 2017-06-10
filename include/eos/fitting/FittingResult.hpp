@@ -46,6 +46,9 @@ struct FittingResult
 	std::vector<float> blendshape_coefficients;
 	core::LandmarkCollection<cv::Vec2f> landmarks;
 	core::Mesh mesh;
+	std::vector<Vec4f> model_points; // the points in the 3D shape model
+	std::vector<int> vertex_indices; // their vertex indices
+	std::vector<Vec2f> image_points; // the corresponding 2D landmark points
 };
 
 	} /* namespace fitting */

@@ -263,38 +263,28 @@ public:
 	cv::Mat add_and_merge(const cv::Mat& isomap)
 	{
 		// Merge isomaps, add the current to the already merged, pixel by pixel:
-#pragma omp target
+		for (int r = 0; r < isomap.rows; ++r)
 		{
-#pragma omp parallel for
-			for (int r = 0; r < isomap.rows; ++r)
+			for (int c = 0; c < isomap.cols; ++c)
 			{
-				for (int c = 0; c < isomap.cols; ++c)
+				if (isomap.at<cv::Vec4b>(r, c)[3] <= threshold)
 				{
-					if (isomap.at<cv::Vec4b>(r, c)[3] <= threshold)
-					{
-						continue; // ignore this pixel, not visible in the extracted isomap of this current frame
-					}
-					// we're sure to have a visible pixel, merge it:
-					// merged_pixel = (old_average * visible_count + new_pixel) / (visible_count + 1)
-					merged_isomap.at<cv::Vec4f>(r, c)[0] =
-						(merged_isomap.at<cv::Vec4f>(r, c)[0] * visibility_counter.at<int>(r, c)
-							+ isomap.at<cv::Vec4b>(r, c)[0]) / (visibility_counter.at<int>(r, c) + 1);
-					merged_isomap.at<cv::Vec4f>(r, c)[1] =
-						(merged_isomap.at<cv::Vec4f>(r, c)[1] * visibility_counter.at<int>(r, c)
-							+ isomap.at<cv::Vec4b>(r, c)[1]) / (visibility_counter.at<int>(r, c) + 1);
-					merged_isomap.at<cv::Vec4f>(r, c)[2] =
-						(merged_isomap.at<cv::Vec4f>(r, c)[2] * visibility_counter.at<int>(r, c)
-							+ isomap.at<cv::Vec4b>(r, c)[2]) / (visibility_counter.at<int>(r, c) + 1);
-					merged_isomap.at<cv::Vec4f>(r, c)[3] =
-						255; // as soon as we've seen the pixel visible once, we set it to visible.
-					++visibility_counter.at<int>(r, c);
+					continue; // ignore this pixel, not visible in the extracted isomap of this current frame
 				}
+				// we're sure to have a visible pixel, merge it:
+				// merged_pixel = (old_average * visible_count + new_pixel) / (visible_count + 1)
+				merged_isomap.at<cv::Vec4f>(r, c)[0] = (merged_isomap.at<cv::Vec4f>(r, c)[0] * visibility_counter.at<int>(r, c) + isomap.at<cv::Vec4b>(r, c)[0]) / (visibility_counter.at<int>(r, c) + 1);
+				merged_isomap.at<cv::Vec4f>(r, c)[1] = (merged_isomap.at<cv::Vec4f>(r, c)[1] * visibility_counter.at<int>(r, c) + isomap.at<cv::Vec4b>(r, c)[1]) / (visibility_counter.at<int>(r, c) + 1);
+				merged_isomap.at<cv::Vec4f>(r, c)[2] = (merged_isomap.at<cv::Vec4f>(r, c)[2] * visibility_counter.at<int>(r, c) + isomap.at<cv::Vec4b>(r, c)[2]) / (visibility_counter.at<int>(r, c) + 1);
+				merged_isomap.at<cv::Vec4f>(r, c)[3] = 255; // as soon as we've seen the pixel visible once, we set it to visible.
+				++visibility_counter.at<int>(r, c);
 			}
 		}
 		cv::Mat merged_isomap_uchar;
 		merged_isomap.convertTo(merged_isomap_uchar, CV_8UC4);
 		return merged_isomap_uchar;
 	};
+
 
 	cv::Mat sharpen(const cv::Mat& isomap) {
 		cv::Mat output;
